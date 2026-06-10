@@ -1,2 +1,3 @@
-# Memoire_vegetariens
-Traitements R réalisés dans le cadre du mémoire de Laureline Brun sur les végétariens, soutenu en 2026
+# Mémoire végétariens
+Je suis Laureline Brun, étudiante à l'ENS Paris-Saclay en sociologie quantitative. Cette page a pour objectif de rendre accessible les traitements que j'ai effectué dans le cadre de mon mémoire de M1 portant sur le végétarisme.
+Ce mémoire vise à établir un profil socio-démographique des végétariens français, et à enquêter sur leur rapport à leur alimentation et à leur santé. Il permet principalement de montrer que les végétariens ne forment pas un ensemble homogène mais peuvent être répartis en plusieurs groupes, caractérisés par l'appartenance de classe, le genre, l'âge et le souci plus ou moins prononcé porté à la santé à travers l'alimentation. Le code partagé ici permet de reproduire les tableaux et figures mobilisées dans mon analyse.
