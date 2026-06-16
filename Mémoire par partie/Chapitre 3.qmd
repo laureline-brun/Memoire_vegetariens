@@ -1,0 +1,1224 @@
+---
+title: "Chapitre 3"
+author: "Laureline Brun"
+format:
+  pdf:
+    fontsize: 12pt
+    include-in-header:
+      text: |
+        \usepackage{tcolorbox}
+        \usepackage{setspace}
+        \setstretch{1.4}
+        \usepackage{xcolor}
+        \definecolor{vertmenthe}{RGB}{204,255,204}
+execute:
+  cache: false
+  freeze: false
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# chargement des packages
+library(haven)
+library(tidyverse)
+library(gtsummary)
+library(survey)
+library(tinytex)
+library(patchwork)
+library(stringr)
+#Pour les ACM :
+library(FactoMineR)
+library(factoextra)
+library(explor)
+library(purrr)
+library(scales)
+
+# chargement des bases
+bs20 <- read_dta("data/BS2020_minimisation.dta")
+bs21 <- read_dta("data/BS2021_minimisation.dta")
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#On s'occupe d'abord de l'ACM sans les omnivores.
+
+bs21v <- bs21 %>% filter(ali17==1)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(
+     ali18_rec = case_when(
+      ali18 %in% c(5,7) ~ "Autre végé",
+      ali18 %in% c(2,4) ~ "Végétalien/Végan",
+      ali18 == 1 ~ "Végétarien",
+      ali18 == 3 ~ "Flexitarien",
+      TRUE ~ NA_character_
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(age_10 = case_when(
+    age_5 == 1 ~ "18-25",
+    age_5 %in% c(2,3) ~ "26-35",
+    age_5 %in% c(4,5) ~ "36-45",
+    age_5 %in% c(6,7) ~ "46-55",
+    age_5 %in% c(8,9) ~ "56-65",
+    age_5 %in% c(10,11) ~ "66-75",
+    age_5 %in% c(12,13) ~ "76-85",
+    TRUE ~ NA_character_
+  ))
+
+bs21v <- bs21v %>%
+  mutate(age_10 = factor(
+    age_10,
+    levels = c("18-25","26-35","36-45","46-55","56-65","66-75","76-85"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(revenu_tranches = case_when(
+    rsrev2 %in% c(1,2,3) ~ "< 600 €",
+    rsrev2 %in% c(4,5)   ~ "600–1200 €",
+    rsrev2 %in% c(6,7)   ~ "1200–2000 €",
+    rsrev2 %in% c(8,9)   ~ "2000–3000 €",
+    rsrev2 %in% c(10)    ~ "3000–4500 €",
+    rsrev2 %in% c(11)    ~ "4500–7600 €",
+    rsrev2 %in% c(12)    ~ "> 7600 €",
+    rsrev2 %in% c(13)    ~ "Refus",
+    rsrev2 %in% c(14)    ~ "NSP",
+    TRUE ~ NA_character_
+  ))
+
+bs21v <- bs21v %>%
+  mutate(revenu_tranches = factor(
+    revenu_tranches,
+    levels = c("< 600 €",
+               "600–1200 €",
+               "1200–2000 €",
+               "2000–3000 €",
+               "3000–4500 €",
+               "4500–7600 €",
+               "> 7600 €",
+               "Refus",
+               "NSP"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(
+    pcs_complet = case_when(
+      sitprof == 2 ~ "Étudiants",
+      sitprof == 3 ~ "Chômeurs",
+      sitprof == 4 ~ "Retraités",
+      sitprof == 5 ~ "Autres inactifs",
+
+      sitprof == 1 & pcs7 == 8 ~ NA_character_,
+
+      sitprof == 1 ~ as.character(haven::as_factor(pcs7)),
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21v <- bs21v %>%
+  mutate(
+    pcs_complet = factor(
+      pcs_complet,
+      levels = c(
+        "Agriculteurs exploitants",
+        "Artisans, commerçants et chefs d'entreprise",
+        "Cadres et professions intellectuelles supérieures",
+        "Professions Intermédiaires",
+        "Employés",
+        "Ouvriers",
+        "Étudiant",
+        "Chômeur",
+        "Retraité",
+        "Autres inactifs"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(
+    situation_fam = case_when(
+
+      # Seul
+      typmen7 == 1 & sexe == 2 ~ "Femme seule",
+      typmen7 == 1 & sexe == 1 ~ "Homme seul",
+
+      # Monoparental
+      typmen7 == 2 & sexe == 2 ~ "Femme avec enfants",
+      typmen7 == 2 & sexe == 1 ~ "Homme avec enfants",
+
+      # Couples
+      typmen7 == 4 ~ "Couple avec enfants",
+      typmen7 == 3 ~ "Couple sans enfant",
+
+      # Autres
+      typmen7 == 5 ~ NA_character_,
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21v <- bs21v %>%
+  mutate(
+    situation_fam = factor(
+      situation_fam,
+      levels = c(
+        "Femme seule",
+        "Homme seul",
+        "Femme avec enfants",
+        "Homme avec enfants",
+        "Couple sans enfant",
+        "Couple avec enfants"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(
+
+    sexe = case_when(
+      sexe == 1 ~ "Homme",
+      sexe == 2 ~ "Femme",
+      is.na(sexe) ~ "sexe_NA",
+      TRUE ~ as.character(sexe)
+    ),
+
+    diplome = case_when(
+      diplome == 1 ~ "Sans diplôme",
+      diplome == 2 ~ "Inférieur au bac",
+      diplome == 3 ~ "Bac ou équivalent",
+      diplome == 4 ~ "Bac +2",
+      diplome == 5 ~ "Bac +3/+4",
+      diplome == 6 ~ "Bac +5 ou plus",
+      is.na(diplome) ~ "diplome_NA",
+      TRUE ~ as.character(diplome)
+    ),
+
+    cat_agg6 = case_when(
+      cat_agg6 == 1 ~ "Rural",
+      cat_agg6 == 2 ~ "< 20 000",
+      cat_agg6 == 3 ~ "20 000 - 99 999",
+      cat_agg6 == 4 ~ "100 000 - 199 999",
+      cat_agg6 == 5 ~ "≥ 200 000",
+      cat_agg6 == 6 ~ "Agglomération parisienne",
+      is.na(cat_agg6) ~ "agglo_NA",
+      TRUE ~ as.character(cat_agg6)
+    ),
+
+    va1 = case_when(
+      va1 == 1 ~ "Très favorable au vaccin",
+      va1 == 2 ~ "Plutôt favorable au vaccin",
+      va1 == 3 ~ "Plutôt pas favorable au vaccin",
+      va1 == 4 ~ "Pas du tout favorable au vaccin",
+      va1 == 5 ~ "vaccin_NA",
+      is.na(va1) ~ "vaccin_NA",
+      TRUE ~ as.character(va1)
+    ),
+
+    ali1 = case_when(
+      ali1 == 1 ~ "Légumes chaque jour",
+      ali1 == 2 ~ "Pas légumes chaque jour",
+      is.na(ali1) ~ "legume_NA",
+      TRUE ~ as.character(ali1)
+    ),
+
+    ali4 = case_when(
+      ali4 == 1 ~ "Fruits chaque jour",
+      ali4 == 2 ~ "Pas fruits chaque jour",
+      is.na(ali4) ~ "fruits_NA",
+      TRUE ~ as.character(ali4)
+    ),
+
+    ali7 = case_when(
+      ali7 == 1 ~ "Féculents chaque jour",
+      ali7 == 2 ~ "Pas féculents chaque jour",
+      is.na(ali7) ~ "feculents_NA",
+      TRUE ~ as.character(ali7)
+    ),
+
+    ali9 = case_when(
+      ali9 == 1 ~ "Boissons sucrées chaque jour",
+      ali9 == 2 ~ "Pas boisson sucrée chaque jour",
+      is.na(ali9) ~ "bois_sucre_NA",
+      TRUE ~ as.character(ali9)
+    ),
+
+    ali10 = case_when(
+      ali10 == 1 ~ "Légumes secs chaque semaine",
+      ali10 == 2 ~ "Pas légume sec chaque semaine",
+      is.na(ali10) ~ "legumes_NA",
+      TRUE ~ as.character(ali10)
+    ),
+
+    ta1 = case_when(
+      ta1 == 1 ~ "Fumeur",
+      ta1 == 2 ~ "Non fumeur",
+      is.na(ta1) ~ "fumeur_NA",
+      TRUE ~ as.character(ta1)
+    ),
+
+    ts_vie = case_when(
+      ts_vie == 0 ~ "Jamais tenté de se suicider",
+      ts_vie == 1 ~ "Déjà tenté de se suicider",
+      is.na(ts_vie) ~ "suicide_NA",
+      TRUE ~ as.character(ts_vie)
+    ),
+
+    imc3 = case_when(
+      imc3 == 1 ~ "Normal",
+      imc3 == 2 ~ "Surpoids",
+      imc3 == 3 ~ "Obésité",
+      is.na(imc3) ~ "imc_NA",
+      TRUE ~ as.character(imc3)
+    ),
+
+    pcs_complet = case_when(
+      is.na(pcs_complet) ~ "pcs_NA",
+      TRUE ~ as.character(pcs_complet)
+    ),
+
+    situation_fam = case_when(
+      is.na(situation_fam) ~ "situation_fam_NA",
+      TRUE ~ as.character(situation_fam)
+    ),
+
+    ali13 = case_when(
+      ali13 == 1 ~ "Mange bio tous les jours",
+      ali13 == 2 ~ "Mange souvent bio",
+      ali13 == 3 ~ "Mange rarement bio",
+      ali13 == 4 ~ "Ne mange jamais bio",
+      is.na(ali13) ~ "ali13_NA",
+      TRUE ~ as.character(ali13)
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v_acm_1 <- bs21v %>%
+  filter(!age_5 %in% c(12,13)) %>% # on enleve les personnes âgées qui n'ont pas eu la question va1
+  mutate(ali18_rec = case_when(ali18 %in% c(5,7) ~ "Autre & NSP",
+                               ali18 %in% c(2,4) ~ "Végétalien/Végan",
+                               ali18 == 1 ~ "Végétarien",
+                               ali18 == 3 ~ "Flexitarien")) %>%
+    select(sexe,
+         pcs_complet,
+         diplome,
+         situation_fam,
+         age_10,
+         revenu_tranches,
+         ali7, #consommation féculents tous les jours
+         ali9, #consommation boissons sucrées tous les jours
+         ali18_rec, #type de régime spécifique
+         ali1, #mange légumes chaque jour
+         ali4, #mange fruits chaque jour
+         ali10, #mange légumes secs chaque semaine
+         ali13, #fréquence consommation aliments bio
+         ) %>%
+ mutate(across(everything(), as.factor))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+res_acm_1 <- MCA(bs21v_acm_1,
+                 graph = F, 
+               quali.sup = c(1:7)
+               ) 
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# repérage des modalités trop rares
+
+modalites_rares <- bs21v_acm_1 %>%
+  # on transforme tout en caractères pour éviter les incompatibilités
+  mutate(across(everything(), as.character)) %>%
+  # on rajoute un "id" temporaire pour le pivot longer
+  mutate(id = row_number()) %>%
+  pivot_longer(-id) %>%
+  # on a une table avec colonne variable, modalité pour chaque individu
+  group_by(name,value) %>%
+  summarize(N=n()) %>%
+  group_by(name) %>%
+  mutate(p = N/sum(N)) %>%
+  # on garde les modalités rares
+  filter(p<.05) 
+# il y a 17 modalités rares, dont beaucoup de NA
+# mais beaucoup proviennent de VARIABLES déjà en illustratives
+
+# il faut maintenant repérer leur position numérique
+# pour pouvoir les exclure
+
+toutes_modalites <- tibble(modalites = row.names(res_acm_1$var$coord)) %>%
+  mutate(position = row_number())
+
+junk <- toutes_modalites$position[toutes_modalites$modalites %in% modalites_rares$value]
+```
+
+# III - Construire un espace social des végétariens
+
+Dans cette partie, il s'agit d'essayer de représenter un espace des pratiques de consommation, afin de pouvoir identifier différents profils de végétariens. Cela va nous permettre de vérifier et de préciser la distinction établie précédemment entre végétarisme de nécessité et végétarisme de liberté.
+
+## 3.1 – Modéliser les pratiques alimentaires des végétariens à l'aide de l'analyse géométrique des données
+
+Pour représenter les végétariens dans un espace, j'ai choisi d'avoir recours à une analyse des correspondances multiples. Je me suis ensuite aidée d'une classification ascendante hiérarchique afin de représenter les différents groupes que j'ai pu identifier. Dans un premier temps, concentrons-nous sur l'élaboration de ces figures.
+
+### 3.1.1 – Choix et contribution des variables
+
+La figure 10 a été obtenue en utilisant 7 variables actives et 6 variables supplémentaires. J'ai choisi de me concentrer sur les variables ayant trait à l'alimentation, ainsi on retrouve la fréquence de consommation des légumes, des légumes secs, des fruits, des féculents complets, des boissons sucrés et des aliments bio. A cela s'ajoute le type de régime alimentaire, qui est réparti en 3 catégories : les végétariens, les flexitariens et les « autres végé ». Cette dernière catégorie regroupe les végans, les végétaliens, et les personnes ayant indiqué « autre » (donc par exemple des pesco-végétariens, ou des individus suivant un régime halal ou kasher).
+
+Les variables supplémentaires regroupent la catégorie socio-professionnelle, le niveau de diplôme, le niveau de revenu, l'âge, le sexe et la configuration familiale. Elles ne contribuent pas à l'élaboration des axes mais sont projetées sur le graphe de sorte à pouvoir expliquer la position des modalités actives. Ainsi, la figure 10 permet de voir comment sont socialement situées les pratiques alimentaires des végétariens.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+res_acm_spe_1 <- MCA(bs21v_acm_1,
+               #ncp = 50,
+               quali.sup=c(1:7),
+               excl = junk, # argument pour l'ACM Spécifique
+               graph=FALSE)
+#explor(res_acm_spe_1)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 20
+#| fig-height: 15
+#| out-width: 100%
+
+library(FactoMineR)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+
+mod_actives_fig10 <- as.data.frame(res_acm_spe_1$var$coord) %>%
+  rownames_to_column("modalite") %>%
+  transmute(
+    modalite,
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    type = "Modalité active"
+  )
+
+mod_sup_fig10 <- as.data.frame(res_acm_spe_1$quali.sup$coord) %>%
+  rownames_to_column("modalite") %>%
+  filter(
+    !modalite %in% c("diplome_NA", "pcs_NA", "situation_fam_NA")
+  ) %>%
+  transmute(
+    modalite,
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    type = "Modalité supplémentaire"
+  )
+
+mod_acm_fig10 <- bind_rows(mod_actives_fig10, mod_sup_fig10)
+
+pct_dim1_fig10 <- round(res_acm_spe_1$eig[1, 2], 1)
+pct_dim2_fig10 <- round(res_acm_spe_1$eig[2, 2], 1)
+
+x_min_fig10 <- min(mod_acm_fig10$Dim1, na.rm = TRUE)
+x_max_fig10 <- max(mod_acm_fig10$Dim1, na.rm = TRUE)
+y_min_fig10 <- min(mod_acm_fig10$Dim2, na.rm = TRUE)
+y_max_fig10 <- max(mod_acm_fig10$Dim2, na.rm = TRUE)
+
+x_pad_fig10 <- (x_max_fig10 - x_min_fig10) * 0.22
+y_pad_fig10 <- (y_max_fig10 - y_min_fig10) * 0.16
+
+x_lim_fig10 <- c(x_min_fig10 - x_pad_fig10, x_max_fig10 + x_pad_fig10)
+y_lim_fig10 <- c(y_min_fig10 - y_pad_fig10, y_max_fig10 + y_pad_fig10)
+
+x_gap_fig10 <- diff(x_lim_fig10) * 0.085
+y_gap_fig10 <- diff(y_lim_fig10) * 0.075
+
+ggplot(mod_acm_fig10, aes(x = Dim1, y = Dim2)) +
+  
+  geom_segment(
+    aes(
+      x = x_lim_fig10[1] + x_gap_fig10,
+      xend = x_lim_fig10[2] - x_gap_fig10,
+      y = 0,
+      yend = 0
+    ),
+    inherit.aes = FALSE,
+    linewidth = 0.45,
+    color = "grey45"
+  ) +
+  
+  geom_segment(
+    aes(
+      x = 0,
+      xend = 0,
+      y = y_lim_fig10[1] + y_gap_fig10,
+      yend = y_lim_fig10[2] - y_gap_fig10
+    ),
+    inherit.aes = FALSE,
+    linewidth = 0.45,
+    color = "grey45"
+  ) +
+  
+  annotate(
+    "label",
+    x = 0,
+    y = y_lim_fig10[2],
+    label = "Régime strict",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    vjust = 1.1
+  ) +
+  
+  annotate(
+    "label",
+    x = 0,
+    y = y_lim_fig10[1],
+    label = "Régime souple",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    vjust = -0.1
+  ) +
+  
+  annotate(
+    "label",
+    x = x_lim_fig10[1],
+    y = 0,
+    label = "Santé +",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    hjust = -0.05
+  ) +
+  
+  annotate(
+    "label",
+    x = x_lim_fig10[2],
+    y = 0,
+    label = "Santé -",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    hjust = 1.05
+  ) +
+  
+  geom_point(
+    aes(color = type, shape = type),
+    size = 1.5,
+    stroke = 0.6
+  ) +
+  
+  geom_text_repel(
+    data = mod_actives_fig10,
+    aes(x = Dim1, y = Dim2, label = modalite),
+    color = "#8B3A3A",
+    size = 4.2,
+    max.overlaps = Inf,
+    force = 18,
+    force_pull = 0.25,
+    box.padding = 0.75,
+    point.padding = 0.45,
+    segment.color = "grey65",
+    segment.linewidth = 0.20,
+    min.segment.length = 0.05,
+    max.time = 3,
+    max.iter = 10000,
+    seed = 123,
+    show.legend = FALSE
+  ) +
+  
+  geom_text_repel(
+    data = mod_sup_fig10,
+    aes(x = Dim1, y = Dim2, label = modalite),
+    color = "#84A98C",
+    size = 4.2,
+    fontface = "bold",
+    max.overlaps = Inf,
+    force = 18,
+    force_pull = 0.25,
+    box.padding = 0.75,
+    point.padding = 0.55,
+    segment.color = "grey65",
+    segment.linewidth = 0.20,
+    min.segment.length = 0.05,
+    max.time = 3,
+    max.iter = 10000,
+    seed = 456,
+    show.legend = FALSE
+  ) +
+  
+  scale_color_manual(
+    values = c(
+      "Modalité active" = "#8B3A3A",
+      "Modalité supplémentaire" = "#84A98C"
+    )
+  ) +
+  
+  scale_shape_manual(
+    values = c(
+      "Modalité active" = 16,
+      "Modalité supplémentaire" = 3
+    )
+  ) +
+  
+  guides(
+    color = guide_legend(
+      title = NULL,
+      override.aes = list(
+        size = 2.2,
+        stroke = 0.7
+      )
+    ),
+    shape = guide_legend(title = NULL)
+  ) +
+  
+  labs(
+    title = "Figure 10 – Analyse des correspondances multiples représentant les pratiques de consommation des végétariens",
+    x = paste0("Dimension 1 (", pct_dim1_fig10, " %)"),
+    y = paste0("Dimension 2 (", pct_dim2_fig10, " %)"),
+    caption = paste(
+      "Source : Baromètre santé 2021.",
+      "Champ : Ensemble des végétariens âgés de 18 à 85 ans résidant en France.",
+      "Lecture : Les individus touchant + de 7600 € par mois ont tendance à avoir un régime alimentaire plus souple et à prioriser la santé dans leur alimentation.",
+      sep = "\n"
+    )
+  ) +
+  
+  coord_cartesian(
+    xlim = x_lim_fig10,
+    ylim = y_lim_fig10,
+    clip = "off"
+  ) +
+  
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    
+    plot.title = element_text(
+      face = "bold",
+      size = 19,
+      hjust = 0.5
+    ),
+    
+    axis.title.x = element_text(
+      size = 14,
+      margin = margin(t = 18)
+    ),
+    
+    axis.title.y = element_text(
+      size = 14,
+      margin = margin(r = 28)
+    ),
+    
+    legend.position = c(0.98, 0.04),
+    legend.justification = c(1, 0),
+    legend.direction = "vertical",
+    legend.background = element_rect(
+      fill = "white",
+      color = "grey80",
+      linewidth = 0.3
+    ),
+    legend.text = element_text(size = 11),
+    
+    plot.caption = element_text(
+      hjust = 0,
+      size = 10
+    ),
+    
+    plot.margin = margin(
+      t = 35,
+      r = 95,
+      b = 55,
+      l = 95
+    )
+  )
+```
+
+Le premier axe représente 17 % de l'inertie totale brute, mais surtout 96 % de l'inertie corrigée, donc il concentre presque toute l'information comprise dans cette ACM. Les modalites qui contribuent le plus à la construction de cet axe sont « Pas de légumes chaque jour », avec une contribution de 22 %, « Pas de fruits chaque jour » avec 12 %, « Pas de légume sec chaque semaine », avec 12 %, « Mange bio tous les jours » avec 12 %, « Boissons sucrées chaque jour » avec 8 % et enfin « Mange rarement bio » avec 8 %.
+
+Ces résultats montrent que l'axe 1 oppose avant tout deux ensembles de pratiques alimentaires. Du côté négatif se regroupent les individus déclarant manger des fruits et légumes ainsi que des produits bio quotidiennement et des légumes secs chaque semaine. À l'inverse, le côté positif rassemble les individus qui ne mangent pas de fruits et légumes chaque jour, ne mangent pas de légumes secs chaque semaine, mangent rarement bio et consomment quotidiennement des boissons sucrées.
+
+Les cos² confirment que cette opposition est particulièrement bien représentée sur l'axe 1. Les modalités « Pas légumes chaque jour » (0,426), « Légumes chaque jour » (0,426), « Mange bio tous les jours » (0,332), « Pas légume sec chaque semaine » (0,304) ou encore « Fruits chaque jour » (0,278) sont particulièrement bien placées.
+
+L'axe 1 peut donc être interprété comme un gradient de qualité nutritionnelle et de proximité avec les normes diététiques légitimes. Il oppose, à gauche, des individus caractérisés par une alimentation diversifiée, riche en végétaux et fortement associée au bio, et, à droite, ceux qui se distinguent par leur moindre consommation d'aliments considérés comme favorables à la santé et la présence plus importante de boissons sucrées dans leur alimentation.
+
+Cette interprétation est renforcée par les modalités supplémentaires. Le côté négatif est associé aux cadres, aux professions intermédiaires , aux diplômés du supérieur ainsi qu'aux revenus les plus élevés. Au contraire, le côté positif est associé aux ouvriers, aux faibles revenus, aux individus peu diplômés ainsi qu'aux hommes seuls et aux hommes avec enfants. L'axe 1 traduit donc une opposition sociale très nette entre végétariens de liberté et végétariens de nécessité.
+
+Le deuxième axe représente seulement 10 % de l'inertie brute et 3 % de l'inertie corrigée. Il est donc beaucoup moins structurant que le premier, mais il permet d'apporter une nuance sur le régime alimentaire.
+
+Les modalités les plus importantes de cet axe sont « Ne mange jamais bio », avec une contribution 33 %, « Flexitarien », avec 15 %, « Végétalien/Végan », avec 11 %, « Autre & NSP », avec 9 % et enfin « Végétarien » avec 9 %.
+
+Ainsi, les catégories de régime alimentaire constituent les principaux moteurs de l'axe 2, contrairement à l'axe 1 qui est défini par les pratiques alimentaires. Le côté positif est dominé par les individus qui ne mangent jamais bio et qui consomment des boissons sucrés tous les jours, ainsi que les végétariens, les végétaliens et les végans. Au contraire, le côté négatif regroupe les flexitariens ainsi que les autres régimes alimentaires, ainsi que les individus qui déclarent ne pas manger de fruits chaque jour ni de légumes secs chaque semaine.
+
+L'opposition principale semble donc être entre les régimes les plus stricts des régimes les plus souples. La présence des végétaliens et des végétariens du côté positif ainsi que celle des flexitariens du côté négatif suggère que cet axe reflète avant tout un niveau d'engagement dans la réduction de la consommation de produits d'origine animale.
+
+L'extrême position de la modalité « Ne mange jamais bio » est particulièrement remarquable. Elle contribue à la hauteur de 33 % à l'axe est en est donc un des principaux moteurs. Elle y est aussi très bien représentée, avec un cos² de 0,387. Elle indique que certains végétariens ou végétaliens ne s'inscrivent pas nécessairement dans une logique de consommation saine ou écologique.
+
+Cette ACM montre donc, comme précédemment évoqué, que les végétariens ne constituent pas un groupe homogène. Le premier axe oppose des végétariens fortement dotés en capital culturel et économique, adoptant des pratiques alimentaires proches des recommandations nutritionnelles, à des végétariens issus de milieux plus populaires dont les pratiques alimentaires apparaissent plus éloignées de ces normes. On retrouve donc la distinction entre nos deux groupes de végétariens. La seconde opposition révélée par ce graphe concerne la forme du végétarisme lui-même. Elle distingue des individus engagés dans des formes strictes de restriction alimentaire (les végétariens et surtout les végans) de profils plus souples, représentés notamment par les flexitariens.
+
+L'un des résultats les plus intéressants est que ces deux dimensions ne se confondent pas totalement. Être végétariens ou végan ne signifie pas automatiquement adopter l'ensemble des comportements alimentaires socialement valorisés. La position extrême de la modalité « Ne mange jamais bio » montre au contraire qu'il existe plusieurs façons d'être végétarien, portées par des logiques sociales différentes.
+
+En définitive, l'espace des végétariens apparaît structuré à la fois par les inégalités sociales classiques et par des degrés variables d'engagement dans la restriction de la consommation des produits d'origine animale. Cette double structuration explique la diversité des profils que l'on retrouve ensuite dans la classification hiérarchique.
+
+### 3.1.2 – Classification ascendante hiérarchique
+
+On peut s'aider d'une classification ascendante hiérarchique pour identifier des groupes de végétariens au sein de l'ACM. Cette méthode permet de réunir dans une même catégorie les individus ayant des profils similaires, c'est-à-dire des réponses proches aux questions considérées dans l'élaboration de l'ACM. La figure 11 illustre ce processus, et nous permet de dire que l'on peut distinguer 4 *clusters* de végétariens à partir du graphe précédent.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+res_cah_1 <- HCPC(res_acm_spe_1, graph = FALSE)
+
+#table(res_cah_1$data.clust$clust)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 14
+#| fig-height: 10
+#| out-width: 100%
+
+# Dendrogramme CAH propre et sobre
+
+couleurs_clusters <- c(
+  "#5B7FA6",  
+  "#D49A5B",  
+  "#7B6AA8",  
+  "#C57B9D"  
+)
+
+tree_cah <- res_cah_2$call$t$tree
+
+par(
+  mar = c(7, 5, 5, 2),
+  family = "sans"
+)
+
+plot(
+  tree_cah,
+  labels = FALSE,
+  hang = -1,
+  main = "Figure 11 - Classification ascendante hiérarchique des profils de consommation des végétariens",
+  xlab = "",
+  ylab = "Hauteur d’agrégation",
+  sub = "",
+  cex.main = 1.25,
+  font.main = 2,
+  cex.lab = 1,
+  col = "grey35",
+  axes = TRUE
+)
+
+rect.hclust(
+  tree_cah,
+  k = 4,
+  border = couleurs_clusters
+)
+
+mtext(
+  text = paste(
+    "Source : Baromètre santé 2021.",
+    "Champ : Ensemble des végétariens âgés de 18 à 85 ans résidant en France.",
+    "Lecture : Les individus sont regroupés selon la proximité de leurs profils dans l’espace factoriel de l’ACM.",
+    sep = "\n"
+  ),
+  side = 1,
+  line = 4.5,
+  adj = 0,
+  cex = 0.75
+)
+```
+
+Afin d'y voir plus clair, il convient de projeter ces *clusters* sur l'ACM : cela donne dans la figure 12.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 20
+#| fig-height: 16
+#| out-width: 100%
+
+library(FactoMineR)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+
+couleurs_clusters <- c(
+  "Cluster 1" = "#5B7FA6",
+  "Cluster 2" = "#D49A5B",
+  "Cluster 3" = "#7B6AA8",
+  "Cluster 4" = "#C57B9D"
+)
+
+ind_clusters <- as.data.frame(res_acm_spe_2$ind$coord) %>%
+  transmute(
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    cluster = factor(
+      res_cah_2$data.clust$clust,
+      levels = 1:4,
+      labels = paste("Cluster", 1:4)
+    )
+  ) %>%
+  filter(
+    !is.na(cluster),
+    cluster %in% names(couleurs_clusters)
+  )
+
+mod_actives <- as.data.frame(res_acm_spe_2$var$coord) %>%
+  rownames_to_column("modalite") %>%
+  transmute(
+    modalite,
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    type = "Modalité active"
+  )
+
+mod_sup <- as.data.frame(res_acm_spe_2$quali.sup$coord) %>%
+  rownames_to_column("modalite") %>%
+  filter(
+    !modalite %in% c("diplome_NA", "pcs_NA", "situation_fam_NA")
+  ) %>%
+  transmute(
+    modalite,
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    type = "Modalité supplémentaire"
+  )
+
+mod_acm <- bind_rows(mod_actives, mod_sup) %>%
+  mutate(
+    Dim2 = ifelse(
+      modalite == "Ne mange jamais bio",
+      Dim2 * 0.75,
+      Dim2
+    )
+  )
+
+pct_dim1 <- round(res_acm_spe_2$eig[1, 2], 1)
+pct_dim2 <- round(res_acm_spe_2$eig[2, 2], 1)
+
+x_min <- min(mod_acm$Dim1, na.rm = TRUE)
+x_max <- max(mod_acm$Dim1, na.rm = TRUE)
+y_min <- min(mod_acm$Dim2, na.rm = TRUE)
+y_max <- max(mod_acm$Dim2, na.rm = TRUE)
+
+x_pad <- (x_max - x_min) * 0.26
+y_pad_top <- (y_max - y_min) * 0.18
+y_pad_bottom <- (y_max - y_min) * 0.12
+
+x_lim <- c(x_min - x_pad, x_max + x_pad)
+y_lim <- c(y_min - y_pad_bottom, y_max + y_pad_top)
+
+x_gap <- diff(x_lim) * 0.085
+y_gap <- diff(y_lim) * 0.075
+
+ggplot(mod_acm, aes(x = Dim1, y = Dim2)) +
+  
+  stat_ellipse(
+    data = ind_clusters,
+    aes(
+      x = Dim1,
+      y = Dim2,
+      group = cluster,
+      color = cluster
+    ),
+    linewidth = 1.5,
+    linetype = "solid",
+    level = 0.95,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+  
+  geom_segment(
+    aes(
+      x = x_lim[1] + x_gap,
+      xend = x_lim[2] - x_gap,
+      y = 0,
+      yend = 0
+    ),
+    inherit.aes = FALSE,
+    linewidth = 0.45,
+    color = "grey45"
+  ) +
+  
+  geom_segment(
+    aes(
+      x = 0,
+      xend = 0,
+      y = y_lim[1] + y_gap,
+      yend = y_lim[2] - y_gap
+    ),
+    inherit.aes = FALSE,
+    linewidth = 0.45,
+    color = "grey45"
+  ) +
+  
+  annotate(
+    "label",
+    x = 0,
+    y = y_lim[2],
+    label = "Régime strict",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    vjust = 1.1
+  ) +
+  
+  annotate(
+    "label",
+    x = 0,
+    y = y_lim[1],
+    label = "Régime souple",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    vjust = -0.1
+  ) +
+  
+  annotate(
+    "label",
+    x = x_lim[1],
+    y = 0,
+    label = "Santé +",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    hjust = -0.05
+  ) +
+  
+  annotate(
+    "label",
+    x = x_lim[2],
+    y = 0,
+    label = "Santé -",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = 0.25,
+    label.padding = unit(0.20, "lines"),
+    hjust = 1.05
+  ) +
+  
+  geom_point(
+    aes(color = type, shape = type),
+    size = 1.5,
+    stroke = 0.6
+  ) +
+  
+  geom_text_repel(
+    data = mod_actives,
+    aes(label = modalite),
+    color = "#8B3A3A",
+    size = 4.2,
+    max.overlaps = Inf,
+    force = 18,
+    force_pull = 0.25,
+    box.padding = 0.75,
+    point.padding = 0.45,
+    segment.color = "grey65",
+    segment.linewidth = 0.20,
+    min.segment.length = 0.05,
+    max.time = 3,
+    max.iter = 10000,
+    seed = 123,
+    show.legend = FALSE
+  ) +
+  
+  geom_text_repel(
+    data = mod_sup,
+    aes(label = modalite),
+    color = "#84A98C",
+    size = 4.2,
+    fontface = "bold",
+    max.overlaps = Inf,
+    force = 18,
+    force_pull = 0.25,
+    box.padding = 0.75,
+    point.padding = 0.55,
+    segment.color = "grey65",
+    segment.linewidth = 0.20,
+    min.segment.length = 0.05,
+    max.time = 3,
+    max.iter = 10000,
+    seed = 456,
+    show.legend = FALSE
+  ) +
+  
+  scale_color_manual(
+    values = c(
+      couleurs_clusters,
+      "Modalité active" = "#8B3A3A",
+      "Modalité supplémentaire" = "#84A98C"
+    ),
+    breaks = c(
+      "Cluster 1",
+      "Cluster 2",
+      "Cluster 3",
+      "Cluster 4",
+      "Modalité active",
+      "Modalité supplémentaire"
+    )
+  ) +
+  
+  scale_shape_manual(
+    values = c(
+      "Modalité active" = 16,
+      "Modalité supplémentaire" = 3
+    )
+  ) +
+  
+  guides(
+    color = guide_legend(title = NULL),
+    shape = "none"
+  ) +
+  
+  labs(
+    title = "Figure 12 – Analyse des correspondances multiples représentant les pratiques de consommation des végétariens\navec projection des clusters",
+    x = paste0("Dimension 1 (", pct_dim1, " %)"),
+    y = paste0("Dimension 2 (", pct_dim2, " %)"),
+    color = NULL,
+    shape = NULL,
+    caption = paste(
+      "Source : Baromètre santé 2021.",
+      "Champ : Ensemble des végétariens âgés de 18 à 85 ans résidant en France.",
+      "Lecture : Les ellipses représentent la zone centrale des quatre groupes d’individus issus de la classification ascendante hiérarchique.",
+      "Note : Certaines variables ont été découpées différemment de l’ACM de la figure 10 pour obtenir des clusters plus distincts.",
+      sep = "\n"
+    )
+  ) +
+  
+  coord_equal(
+    xlim = x_lim,
+    ylim = y_lim,
+    clip = "off"
+  ) +
+  
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    
+    plot.title = element_text(
+      face = "bold",
+      size = 19,
+      hjust = 0.5
+    ),
+    
+    axis.title.x = element_text(
+      size = 14,
+      margin = margin(t = 18)
+    ),
+    
+    axis.title.y = element_text(
+      size = 14,
+      margin = margin(r = 35)
+    ),
+    
+    legend.position = c(1.08, 0.08),
+    legend.justification = c(1, 0),
+    legend.direction = "vertical",
+    legend.background = element_rect(
+      fill = "white",
+      color = "grey80",
+      linewidth = 0.3
+    ),
+    legend.text = element_text(size = 11),
+    
+    plot.caption = element_text(
+      hjust = 0,
+      size = 10
+    ),
+    
+    plot.margin = margin(
+      t = 55,
+      r = 190,
+      b = 60,
+      l = 100
+    )
+  )
+```
+
+On obtient 4 *clusters*, représentés par les ellipses de couleur, qui englobent chacune un des groupes de végétariens, qu'il convient à présent d'analyser.
+
+## 3.2 – Quatre groupes de végétariens ?
+
+Il nous faut à présent, à l'aide des figures 10 et 12, essayer de décrire l'écosystème du végétarisme, afin d'affiner la dichotomie élaborée dans les deux premiers chapitres.
+
+### 3.2.1 – Des végétariens modestes peu soucieux de leur santé
+
+Dans un premier temps, on peut s'intéresser aux *clusters* 3 et 4, respectivement en violet et en rose, qui sont les plus restreints en termes d'effectif : si on les additionne, ils réunissent moins d'un tiers de l'échantillon total.
+
+Le troisième *cluster* est défini par une moindre consommation de produits végétaux. La modalité centrale est « Pas de légumes chaque jour » : 61 % des individus du *cluster* sont dans ce cas, contre seulement 14 % de l'échantillon. De même, 76 % déclarent ne pas manger de fruits chaque jour, contre 27 % dans l'ensemble. Les légumes secs sont aussi nettement moins présents : 66 % n’en mangent pas chaque semaine, contre 34 % en moyenne. Ce cluster correspond donc à la partie droite de l’ACM : celle où se regroupaient « Pas de légumes chaque jour », « Pas de fruits chaque jour », « Pas de légume sec chaque semaine », « Mange rarement bio » et « Boissons sucrées chaque jour ». Les résultats de la CAH confirment cette interprétation : 49 % mangent rarement bio, contre 20 % globalement ; 26 % consomment des boissons sucrées chaque jour, contre 18 % ; 77 % ne mangent pas de féculents chaque jour, contre 64 %. À l’inverse, les pratiques nutritionnellement vertueuses sont fortement sous-représentées : seulement 15 % des individus de ce *cluster* mangent bio tous les jours contre 41 % dans l'ensemble, 34 % consomment des légumes secs chaque semaine contre 66 %, 24 % mangent des fruits chaque jour contre 73 %, et 40 % mangent des légumes chaque jour contre 86 %.
+
+Le profil social de ce groupe est plus populaire et masculin que la moyenne de l'échantillon. Les hommes représentent 42 % du cluster, contre 34 % au global. Les hommes seuls sont aussi surreprésentés : 8 % de plus que la moyenne. Les diplômes faibles sont plus fréquents : les personnes avec un diplôme inférieur au bac sont 7 % de plus qu'au global, et les sans diplôme 3 %. Les revenus inférieures à 600 € mensuels sont également un peu plus représentés : 8 %, contre 5 %. À l’inverse, les bac +3/+4, les bac +5 ou plus, les femmes, les couples avec enfants et les individus percevant des revenus moyens à supérieurs sont sous-représentés.
+
+Le quatrième *cluster* est beaucoup plus petit, puisqu'il comporte seuelemnt 65 individus, mais il est extrêmement homogène autour d’une modalité : 100 % des individus du cluster déclarent ne jamais manger bio, alors que cette modalité ne représente que 5,4 % de l’ensemble de l'échantillon. Mais ce cluster ne se réduit pas seulement au refus ou à l’absence de bio. Il cumule plusieurs marqueurs populaires et de faible conformité aux normes du bien manger. En effet, les individus de ce groupe sont 25 % de plus que la moyenne à consommer des boissons sucrées au quotidien ; 18 % de plus à ne pas consommer de légumes tous les jours et 26 % de plus à ne pas manger de légumes secs chaque semaine. En outre, les ouvriers sont surreprésentés, puisqu'ils forment 15 % de ce *cluster*, contre seulement 6 % de l'échantillon, de même que les autres inactifs, pour qui les chiffres sont identiques, les personnes sans diplôme (avec un écart de 15 %) et les personnes ayant un diplôme inférieur au bac (avec cette fois-ci une différence de 20 %). À l’inverse, les marqueurs d'une position sociale favorisée sont très fortement sous-représentés : les cadres ne représentent que 2 % du cluster contre 18 % globalement, les bac +5 ou plus sont 20 % de moins, les revenus allant de 3 000 à 4 500 € 13 % de moins et les revenus allant de 4 500 à 7 600 € 8 % de moins.
+
+Le cluster se distingue aussi par la présence relative des végétaliens et des végans : on en trouve 11 % de plus que dans l'échantillon total. Ce point est très intéressant, car il montre qu’une partie des régimes les plus stricts ne s’inscrit pas dans la partie favorisée de l’alimentation légitime. Autrement dit, le véganisme et le végétalisme ne correspondent pas automatiquement à une consommation de produits issus de l'agriculture biologique ou à un profil de classe supérieure. Dans ce cluster, l’engagement dans un régime strict peut coexister avec un refus ou une absence totale de consommation bio, ainsi qu’avec des indicateurs de précarité.
+
+A partir de ces deux groupes, on peut dresser le portrait des végétariens de nécessité. Il s'agit d'hommes, célibataires, parfois avec des enfants à charge. Ils sont plutôt peu diplômés comparé au reste des végétariens, et sont parmi ceux qui perçoivent les revenus les moins élevés. Ils mangent des fruits et légumes mais moins fréquemment que ce à quoi l'on pourrait s'attendre. Ils ne privilégient pas les produits bio, mais aiment consommer des boissons sucrées. En ce qui concerne leur régime alimentaire, ils sont plus « stricts » que les individus des *cluster*s 1 et 2, puisque les flexitariens sont sous-représentés dans le *cluster* 3, au profit des végétariens, tandis que le *cluster 4* comporte une grande partie des végans et des végétaliens.
+
+On peut en déduire que l'observance de l'interdit de la viande est plus rigoureux chez les classes populaires que chez les classes supérieures. Cela va avec l'idée que pour les végétariens de liberté, il s'agit surtout d'un choix sanitaire et d'une posture identitaire, plus que d'un engagement absolu à ne pas transgresser. On observe en outre que, parmi les végétariens, les « exceptions » – comme manger de la viande au restaurant, dans des repas de famille ou lors d'occasions particulières – sont socialement situées \[Ouédraogo, 2020\]. Elles sont plus fréquentes mais aussi plus assumées chez les classes supérieures. On peut alors considérer le flexitarisme comme une étape ultime de cette désacralisation du végétarisme ; le renoncement à la viande devient un idéal qui oriente l'action et non plus un principe moral fort.
+
+La popularisation du flexitarisme est sans doute un signe de la restructuration des motivations derrière le choix du végétarisme. En effet, les végétariens qui se sont engagés pour lutter contre l'exploitation des animaux sont bien plus réticents que les autres à faire des exceptions. Pour eux, le fait de manger de la chair animale représente une véritable négation de leurs convictions éthiques \[Traïni, 2012\]. Il n'en va pas de même pour des végétariens écologistes, pour qui le morceau de viande consommé ne représente qu'une petite quantité d'émissions polluantes ; leur écart peut être aisément compensé ou pardonné. Les végétariens se souciant avant tout de leur santé, quant à eux, peuvent considérer un repas avec de la viande comme un *cheat meal,* c'est-à-dire une exception planifiée dans un régime alimentaire usuellement sain. On peut donc supposer que les végétariens de nécessité sont plus proches de la cause animale que de l'écologie ou des préoccupations sanitaires – comme l'indique aussi leur tendance à consommer des boissons sucrées et peu de fruits.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens de nécessité sont plus proches de la cause animale que de l'écologie et des préoccupations pour la santé. Ils ont un régime alimentaire plus strict mais plutôt moins équilibré.
+\end{tcolorbox}
+
+### 3.2.2 – Les cadres adoptent un régime à la fois plus souple et plus centré sur la dimension sanitaire
+
+Il nous faut à présent regarder comment sont représentés les végétariens de liberté sur l'ACM. Le *cluster* 2, en jaune, est celui qui se rapproche le plus de la définition précédemment établie de ce groupe.
+
+Ce deuxième *cluster* est massivement structuré par les flexitariens. Ceux-ci représentent 73 % du cluster, alors qu’ils ne représentent que 29 % de l’ensemble. Inversement, les végétariens n’y représentent que 1  % alors qu'ils forment la moitié de l'échantillon total. Ce cluster est donc un pôle de régime souple, très distinct du végétarisme strict.
+
+Mais ce qui est intéressant, c’est que cette souplesse ne correspond pas du tout à une alimentation dégradée. Au contraire, ce cluster est extrêmement conforme aux normes de santé : 100 % des individus de ce groupe mangent des légumes chaque jour, 83 % mangent des fruits quotidiennement, et 55 % mangent bio tous les jours. La consommation quotidienne de légumes est presque totale également. Donc ce groupe n’est pas moins engagé au sens nutritionnel ; il est moins strict dans la restriction de la viande, mais très engagé dans une alimentation légitime.
+
+C’est en effet le *cluster* le plus nettement favorisé socialement. Les cadres et professions intellectuelles supérieures y sont 5 % de plus qu'au global ; les diplômés bac +5 ou plus 6 % ; les revenus allant de 3 000 à 4 500 € mensuels 7 % ; les revenus de allant de 4 500 à 7 600 € 4 %. À l’inverse, les faibles revenus et les faibles diplômes sont sous-représentés : par exemple, les revenus inférieures à 600 € ne représentent que 3 % du cluster contre 5 % globalement.
+
+Ce groupe est donc très important sociologiquement : il montre que les pratiques alimentaires qui traduisent un fort souci pour la santé ne se confondent pas avec le végétarisme strict. Ici, on a plutôt un flexitarisme de classes supérieures, fortement doté en capital économique et culturel, qui se rapproche des normes alimentaires légitimes sans forcément adopter une rupture stricte avec la viande ou les produits d'origine animale.
+
+L'expression « végétariens de liberté » prend alors un double-sens, puisqu'il s'agit non seulement d'adopter librement ce régime mais aussi de l'adapter selon ses besoins. Cette volonté d'assouplir les règles du végétarisme peut aussi venir du fait que ce groupe comporte les configurations familiales les moins propices au développement d'un régime alimentaire alternatif, puisqu'on y trouve notamment les enquêtés en couple avec des enfants. Il est donc possible que la famille soit la source des exceptions au végétarisme ou la raison pour laquelle les individus choisissent de renoncer à un engagement plus complet.
+
+Le flexitarisme est aussi une preuve que les individus du *cluster* 2 se soucient avant tout de leur santé, qui est la source de leur renoncement à la viande. Les flexitariens sont en effet plus nombreux en proportion à se préoccuper de leur état de santé que les végétariens ou que les végans \[Beardsworth, Bryman, 1999\]. Il peut également s'agir d'une forme de prudence ou de lenteur dans la conversion au végétarisme, puisque le flexitarisme est souvent envisagé comme une première étape dans une carrière de végétarien ou même de végan. On peut en conclure que les végétariens de liberté font preuve de plus de réserve lorsqu'il s'agit de changer leurs habitudes alimentaires, et qu'ils préfèrent d'abord tester cette nouvelle habitude avant de l'adopter. Cette prudence les conduit peut-être à s'interrompre dans leur cheminement vers le végétarisme plus fréquemment que leurs homologues issus de milieux moins favorisés.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens de liberté se soucient avant tout de leur santé et ils ont tendance à adopter des régimes alimentaires plus souples. 
+\end{tcolorbox}
+
+### 3.2.3 – Un végétarisme de classe moyenne ?
+
+Que dire à présent du premier *cluster* ? C'est clairement le groupe des végétariens au sens strict, avec une alimentation plutôt régulière et conforme aux normes nutritionnelles. La modalité la plus caractéristique est « Végétarien » : 86 % des individus du cluster sont végétariens, alors que cette modalité représente la moitié de l'ensemble. Les flexitariens y sont totalement absents, de même que les réponses « Autre & NSP » . Ce cluster est donc très net : il s'agit d’un pôle végétarien.
+
+Sur le plan alimentaire, le profil est très vertueux : 98 % mangent des légumes chaque jour contre 86 % globalement. De même, les individus de ce *cluster* sont 15 % de plus que la moyenne à manger des fruits quotidiennement et c'est pareil pour les légumes secs chaque semaine. À l’inverse, les modalités de faible consommation sont nettement sous-représentées. Le rapport au bio confirme ce profil : ces végétariens sont 6 % de plus à manger bio tous les jours que la moyenne de l'échantillon, et 3 % de plus à déclarer en manger souvent. La modalité « Ne mange jamais bio » est totalement absente du *cluster*.
+
+Socialement, ce groupe semble légèrement plus âgé et plus retraité que la moyenne : les 66–75 ans représentent 18 % du cluster, contre 14 % globalement, et les retraités 22%, contre 18 %. Ce n’est pas une opposition sociale aussi marquée que dans les autres clusters, mais cela donne l’image d’un végétarisme plutôt stabilisé, probablement plus inscrit dans une routine, associé à des pratiques alimentaires quotidiennes assez structurées.
+
+On peut alors parler d'un groupe de végétariens des classes moyennes supérieures, qui est aussi le plus important puisqu'il regroupe un peu moins de la moitié de l'échantillon. C'est donc une partie non-négligeable de l'écosystème du végétarisme.
+
+Ces végétariens sont a priori sensibles à la cause animale, ou du moins ils le sont davantage que la frange la plus favorisée représentée par le *cluster* 2, mais ils se préoccupent également de leur santé. Ils mangent presque autant de produits issus de l'agriculture biologique que les cadres, et ils sont au contraire peu à consommer des boissons sucrées tous les jours. On peut faire l'hypothèse qu'aucun motif de conversion au végétarisme ne domine dans le groupe mais qu'ils sont tous présents à différents niveaux. Il est possible que ce soit la santé qui est primée dans un premier temps, et même qu'il y ait eu une étape de flexitarisme, mais il est aussi envisageable que les préoccupations pour la santé soient arrivées plus tard, en se renseignant sur les bienfaits des régimes sans viande. Quelques végans sont présents dans cette catégorie mais cela reste marginal, ce qui signifie que si l'engagement est relativement strict, il ne prend souvent pas les formes les plus intenses. Cela est sans doute dû à la présence fréquente des enfants parmi les individus de ce *cluster*, qui limitent les possibilités de modification du régime alimentaire.
+
+Ainsi, on peut voir ce groupe comme représentant le végétarisme des classes moyennes, plutôt supérieures, que l'on peut plutôt catégorisé comme un végétarisme de liberté mais qui diffère tout de même de celui des cadres sur plusieurs aspects. Il est en effet plus rigide et, s'il est motivé par une attention particulière portée à la santé, ce n'est pas la motivation centrale.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+On identifie un groupe de végétariens issus des classes moyennes supérieures, se rapprochant du végétarisme de liberté. 
+\end{tcolorbox}
+
+### 3.2.4 – La place des omnivores
+
+Après avoir étudié la répartition des végétariens, on peut se demander comment ils se situent vis-à-vis des omnivores, et notamment quels sous-groupes présentent les caractéristiques les plus proches de celles de ces derniers. Etant donné que l'espace de l'alimentation est un espace structuré par des oppositions, il est fertile de considérer les végétariens comme un groupe ouvert, qui fonctionne avec celui des mangeurs de viande, et donc de les étudier en parallèle.
+
+Une nouvelle ACM (voir Annexes, figure 13) a été élaborée similairement à la figure 10, mais en ajoutant cette fois-ci un échantillon sélectionné aléatoirement de 200 omnivores. On ne peut pas ajouter tous les omnivores sinon on ne pourrait plus rien dire des végétariens, c'est pour cela qu'il a fallu effectuer un tirage.
+
+Ce nouveau graphique, ainsi qu'une classification ascendante hiérarchique, nous permettent de dire que les omnivores se caractérisent par des pratiques alimentaires différentes de celles des végétariens. Ils consomment moins de légumes, de légumes secs et de fruits. En outre, deux tiers des omnivores déclarent ne manger des produits issus de l'agriculture biologique que rarement ou jamais. Ils consomment par contre un peu plus de boissons sucrées, ce qui peut laisser penser que la santé occupe une place moins centrale dans leurs préoccupations.
+
+Sur le plan social, les omnivores sont davantage associés aux classes populaires : ils sont davantage à ne pas posséder de diplôme ou à avoir un diplôme de niveau inférieur au baccalauréat. Ils sont également proches des ouvriers, des employés et des chômeurs, et plutôt éloignés des cadres.
+
+En incorporant les omnivores, on observe par ailleurs que la division en *clusters* est différente. Les végétariens s'agrègent en un groupe, représentant environ la moitié de l'échantillon, les omnivores réunissent un tiers des individus et enfin les flexitariens représentent les 15 % restants. Cela veut dire que, si le bloc des végétariens peut être divisé en plusieurs sous-catégories comme nous l'avons vu précédemment, ce sont surtout les flexitariens qui s'en différencient. Contrairement à ce que l'on pourrait penser, les omnivores ne sont pas proches des flexitariens ici, même si les différences de régimes alimentaires entre ces deux groupes semblent au premier abord moindres.
+
+Les axes sont structurés uniquement par les variables d'alimentation, puisque les variables correspondant aux données socio-démographiques sont en supplémentaires. Pourtant, il semblerait que les flexitariens soient éloignés des omnivores car ils ne présentent pas le même profil sociologique. Les flexitariens sont plutôt diplômés, ce sont des cadres et des professions intermédiaires, contrairement aux mangeurs de viande.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens forment un bloc relativement homogène lorsqu'on les compare avec les flexitariens et les omnivores, et ce malgré leurs différences de positionnement social et de motifs de conversion au végétarisme. 
+\end{tcolorbox}
+
+Ainsi, nous avons pu montrer que les catégories que nous avions définies dans les deux premiers chapitres, à savoir le végétarisme de nécessité et le végétarisme de liberté, pouvaient être affinées. Une analyse plus poussée de l'espace des pratiques alimentaires des végétariens a permis de découvrir que le végétarisme de liberté pouvait être découpé entre des cadres, avec des hauts revenus, plutôt flexitariens, et des classes moyennes supérieures, plutôt végétariennes. On a alors un gradient qui s'étend des flexitariens, les plus aisés et aussi les plus préoccupés par leur santé, qui préfèrent un régime alimentaire souple, aux végétariens de nécessité, plus stricts sur leur régime et moins attachés aux considérations sanitaires et écologiques.
+
+Une analyse incluant les omnivores à en outre permis de mettre en lumière la relative homogénéité du bloc des végétariens : les différences de classes disparaissent lorsque l'on introduit des mangeurs de viande dans l'équation. Il apparaît alors que les flexitariens sont les plus distincts des autres individus désirant réduire leur consommation de produits d'origine animale, mais qu'on ne peut pour autant pas les assimiler aux omnivores.

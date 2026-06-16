@@ -1,0 +1,837 @@
+---
+format:
+  pdf:
+    fontsize: 12pt
+    include-in-header:
+      text: |
+        \usepackage{tcolorbox}
+        \usepackage{setspace}
+        \setstretch{1.4}
+        \usepackage{xcolor}
+        \definecolor{vertmenthe}{RGB}{204,255,204}
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Je commence par mettre tout ce qu'il faut pour que les tableaux fonctionnent.
+```
+
+```{r setup, include=FALSE}
+# chargement des packages
+library(haven)
+library(tidyverse)
+library(gtsummary)
+library(survey)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rnaturalearthhires)
+library(stringr)
+library(gt)
+#Pour les ACM :
+library(FactoMineR)
+library(factoextra)
+library(Factoshiny)
+library(explor)
+
+# chargement des bases
+bs20 <- read_dta("data/BS2020_minimisation.dta")
+bs21 <- read_dta("data/BS2021_minimisation.dta")
+
+# Options globales pour tous les chunks
+knitr::opts_chunk$set(fig.pos = 'H', fig.width = 6, fig.height = 4, fig.align = 'center' )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Recodage des variables utiles
+
+bs21 <- bs21 %>%
+  mutate(age_10 = case_when(
+    age_5 == 1 ~ "18-25",
+    age_5 %in% c(2,3) ~ "26-35",
+    age_5 %in% c(4,5) ~ "36-45",
+    age_5 %in% c(6,7) ~ "46-55",
+    age_5 %in% c(8,9) ~ "56-65",
+    age_5 %in% c(10,11) ~ "66-75",
+    age_5 %in% c(12,13) ~ "76-85",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(age_10 = factor(
+    age_10,
+    levels = c("18-25","26-35","36-45","46-55","56-65","66-75","76-85"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = case_when(
+    rsrev2 %in% c(1,2,3) ~ "< 600 €",
+    rsrev2 %in% c(4,5)   ~ "600–1200 €",
+    rsrev2 %in% c(6,7)   ~ "1200–2000 €",
+    rsrev2 %in% c(8,9)   ~ "2000–3000 €",
+    rsrev2 %in% c(10)    ~ "3000–4500 €",
+    rsrev2 %in% c(11)    ~ "4500–7600 €",
+    rsrev2 %in% c(12)    ~ "> 7600 €",
+    rsrev2 %in% c(13)    ~ "Refus",
+    rsrev2 %in% c(14)    ~ "NSP",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = factor(
+    revenu_tranches,
+    levels = c("< 600 €",
+               "600–1200 €",
+               "1200–2000 €",
+               "2000–3000 €",
+               "3000–4500 €",
+               "4500–7600 €",
+               "> 7600 €",
+               "Refus",
+               "NSP"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    pcs_complet = case_when(
+      sitprof == 2 ~ "Étudiants",
+      sitprof == 3 ~ "Chômeurs",
+      sitprof == 4 ~ "Retraités",
+      sitprof == 5 ~ "Autres inactifs",
+
+      sitprof == 1 & pcs7 == 8 ~ NA_character_,
+
+      sitprof == 1 ~ as.character(haven::as_factor(pcs7)),
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    pcs_complet = forcats::fct_recode(
+      pcs_complet,
+      "Agriculteurs" = "Agriculteurs exploitants",
+      "Artisans, commerçants" = "Artisans, commerçants et chefs d'entreprise",
+      "Cadres" = "Cadres et professions intellectuelles supérieures"
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = case_when(
+
+      # Seul
+      typmen7 == 1 & sexe == 2 ~ "Femme seule",
+      typmen7 == 1 & sexe == 1 ~ "Homme seul",
+
+      # Monoparental
+      typmen7 == 2 & sexe == 2 ~ "Femme avec enfants",
+      typmen7 == 2 & sexe == 1 ~ "Homme avec enfants",
+
+      # Couples
+      typmen7 == 4 ~ "Couple avec enfants",
+      typmen7 == 3 ~ "Couple sans enfant",
+
+      # Autres
+      typmen7 == 5 ~ NA_character_,
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = factor(
+      situation_fam,
+      levels = c(
+        "Femme seule",
+        "Homme seul",
+        "Femme avec enfants",
+        "Homme avec enfants",
+        "Couple sans enfant",
+        "Couple avec enfants"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Création d'un survey design pour inclure la pondération.
+
+df <- bs21 %>%
+  select(qcpser, sexe,pcs7,diplome,va1,buv, alcr4, alcr1,aps1, aps3, aps5,aps9,age_10,revenu_tranches,pcs_complet, situation_fam,
+         ali1, ali2, ali3, ali4,ali10,ali13,ali17,buv,di13,ta1, di13, sexe, age_5,
+         infal0,ali19, ali18, enceint1, ta1, ta3,va1, va6, va10,ali14, ali15, ali19, 
+         ali9,ali7,imc3,age_5, senv1_1, senv1_2, senv1_3, senv1_4, senv1_5, senv2_1, senv2_2, senv2_3, senv2_4, senv2_5, senv4_1, senv4_2, senv4_3, senv4_4, senv4_5, senv5,
+         sm2,tax1,sg1,aps1, rsrev2,ras1, ras4, ras7, infal0, infal12,acc10_1,acc10_2, acc10_3,vit_avec_enfant, vit_seul, vit_en_couple, Continent, ists, sm25, sm35,
+         ists,sui1,sui6,sitprof, region, cat_agg6, pay1, pay4, al11, sg1, sg2, imc3, imc6, obesite, chgt_pds_5kg, chgt_pds_5kg_b, edmsymp,perturb,sm_EDC, ts_vie, sm_hadtot, typmen7,
+         poids_ind_reg_std, etud3,dip2 ) %>%
+  mutate(across(where(is.labelled), as_factor))
+
+df_svy <-
+  survey::svydesign(
+    id = ~qcpser,
+    weights = ~poids_ind_reg_std,
+    data = df
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Base ne contenant que les végétariens
+
+bs21v <- bs21 %>% filter(ali17==1)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+dfv <- bs21v %>%
+  select(qcpser, sexe,pcs7,diplome,va1,buv, alcr4, alcr1,aps1, aps3, aps5,aps9,age_10,revenu_tranches,pcs_complet, situation_fam,
+         ali1, ali2, ali3, ali4,ali10,ali13,ali17,buv,di13,ta1, di13, sexe, age_5,
+         infal0,ali19, ali18, enceint1, ta1, ta3,va1, va6, va10,ali14, ali15, ali19, 
+         ali9,ali7,imc3,age_5, senv1_1, senv1_2, senv1_3, senv1_4, senv1_5, senv2_1, senv2_2, senv2_3, senv2_4, senv2_5, senv4_1, senv4_2, senv4_3, senv4_4, senv4_5, senv5,
+         sm2,tax1,sg1,aps1, rsrev2,ras1, ras4, ras7, infal0, infal12,acc10_1,acc10_2, acc10_3,vit_avec_enfant, vit_seul, vit_en_couple, Continent, ists, sm25, sm35,
+         ists,sui1,sui6,sitprof, region, cat_agg6, pay1, pay4, al11, sg1, sg2, imc3, imc6, obesite, chgt_pds_5kg, chgt_pds_5kg_b, edmsymp,perturb,sm_EDC, ts_vie, sm_hadtot, typmen7,
+         poids_ind_reg_std, etud3,dip2 ) %>%
+  mutate(across(where(is.labelled), as_factor))
+
+df_svyv <-
+  survey::svydesign(
+    id = ~qcpser,
+    weights = ~poids_ind_reg_std,
+    data = dfv
+  )
+```
+
+# I – Qui sont les végétariens ?
+
+Cette première section a pour objectif d'identifier le profil socio-démographique, s'il en existe un, des végétariens, ou du moins de voir où ils sont situés dans le tissu social. Pour ce faire, je m'intéresse à la classe sociale, au niveau de diplôme, au revenu, au genre, à la situation familiale, à l'âge et à l'origine géographique.
+
+## 1.1  – Quelle influence de la classe sociale, du niveau de diplôme et du revenu ?
+
+Tout d'abord, il s'agit de comprendre dans quelle mesure le statut social et financier des individus les poussent plus ou moins à adopter un régime végétarien. Je souhaite déterminer laquelle de ces variables a le plus d'impact et constater si oui ou non l'adoption d'un régime alimentaire alternatif est réservé aux classes supérieures.
+
+### 1.1.1 – Une pratique présente à tous les niveaux de l’échelle sociale ?
+
+Pour commencer, observons la distribution des végétariens en fonction de la catégorie socio-professionnelle sous forme d'un tableau (cf. Tableau 2).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+ordre_pcs <- c(
+  "Agriculteurs",
+  "Artisans, commerçants",
+  "Cadres",
+  "Professions Intermédiaires",
+  "Employés",
+  "Ouvriers",
+  "Retraité",
+  "Chômeur",
+  "Étudiant",
+  "Autres inactifs"
+)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .cible_bin = ifelse(ali17 == "Oui", 1, 0),
+    .ligne = factor(pcs_complet, levels = ordre_pcs)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svyby(
+  ~.cible_bin,
+  ~.ligne,
+  des_tmp,
+  svymean,
+  na.rm = TRUE
+) %>%
+  mutate(Pct = round(.cible_bin * 100, 0)) %>%
+  select(.ligne, Pct)
+
+total_total <- round(as.numeric(svymean(~.cible_bin, des_tmp)) * 100, 0)
+
+tab <- tab %>%
+  arrange(.ligne) %>%
+  bind_rows(tibble(.ligne = "Total", Pct = total_total))
+
+tab %>%
+  gt(rowname_col = ".ligne") %>%
+  cols_label(Pct = "") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  tab_header(
+    title = md("**Tableau 2 – Part des végétariens selon la catégorie socio-professionnelle (en %)**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 7 % des cadres déclarent avoir un régime alimentaire spécifique.") %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+On constate que les végétariens sont plus nombreux en proportion chez les cadres, les étudiants, les chômeurs et les autres inactifs que chez le reste de la population. Il y a au contraire peu d'agriculteurs, d'ouvriers et d'employés végétariens. En effet, 7 % des cadres déclarent suivre un régime alimentaire spécifique, soit 2 % de plus que la moyenne de la population enquêtée, alors que c'est seulement 5 % pour les ouvriers.
+
+La faible proportion d'agriculteurs végétariens (2 %) peut s'expliquer par le rapport matérialiste à la nature qui caractérise les ruraux. En effet, ils ont plus tendance à pratiquer la pêche ou la chasse, ainsi qu'à élever du bétail pour le consommer ou à se nourrir de ce qu'il produit. Dans cette perspective, les animaux sont considérés avant tout comme une ressource et non comme des entités sentientes, pouvant et devant faire l'objet de préoccupations éthiques. Ainsi, le végétarisme ne fait pas vraiment de sens, puisqu'il n'est pas perçu comme contradictoire de manger de la viande et de respecter ou d'aimer ses bêtes. En outre, il faut noter que les agriculteurs vivent en zone rurale, or le végétarisme est plus présent dans les grandes villes.
+
+Pourquoi une telle prégnance du végétarisme chez les chômeurs et les autres inactifs – à savoir les personnes au foyer et les chômeurs n'ayant jamais travaillé ? Cela est sans doute dû en partie à la contrainte financière qui pèse sur ces individus, étant donné que consommer de la viande peut se révéler coûteux, surtout dans le cas de la viande rouge. La même explication peut être avancée pour expliquer en partie la proportion de végétariens chez les étudiants. Dans leur cas, l'âge joue aussi un grand rôle puisque végétarisme et âge sont négativement corrélés. Les jeunes ont tendance à adopter plus facilement des modes de consommation alternatifs, tandis que les générations plus âgées restent attachées à des plats plus traditionnels: une viande ou un poisson avec son accompagnement. En outre, les étudiants possèdent en général un niveau de diplôme plus important que le reste de la population (ou alors ils sont en voie d'en acquérir un). Les diplômés ayant plus de chance d'être végétariens, cela peut expliquer un pourcentage plus important d'individus déclarant un régime alimentaire alternatif chez les étudiants.
+
+Le cas des ouvriers et des cadres me semble être le plus intéressant : on peut faire l'hypothèse qu'une partie de l'écart entre ces deux catégories socio-professionnelles peut s'expliquer par le différentiel de revenu et de niveau de diplôme. Les ouvriers et les employés sont en général moins diplômés – ils possédent en général le baccalauréat ou un diplôme de niveau de bac +2 – et ils sont sous-représentés parmi les plus hautes tranches de salaires.
+
+Il convient donc de s'intéresser également à l'effet des études sur le végétarisme (cf. Figure 1). Le niveau de diplôme est un indicateur privilégié du capital culturel, et à ce sens est intéressant à mobiliser dans l'étude du végétarisme.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+ordre_diplome <- c(
+  "Sans diplôme",
+  "Inférieur au bac",
+  "Bac ou équivalent",
+  "Bac +2",
+  "Bac +3/+4",
+  "Bac +5 ou plus"
+)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .cible_bin = ifelse(ali17 == "Oui", 1, 0),
+    .ligne = factor(diplome, levels = ordre_diplome)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svyby(
+  ~.cible_bin,
+  ~.ligne,
+  des_tmp,
+  svymean,
+  na.rm = TRUE
+) %>%
+  mutate(pct = round(.cible_bin * 100, 0)) %>%
+  arrange(.ligne)
+
+ggplot(tab, aes(x = .ligne, y = pct, group = 1)) +
+  geom_line(
+    color = "#84A98C",
+    linewidth = 1.2
+  ) +
+  geom_point(
+    color = "#84A98C",
+    size = 3
+  ) +
+  geom_text(
+    aes(label = pct),
+    vjust = -0.8,
+    size = 3.5
+  ) +
+  labs(
+    title = "Figure 1 – Part des végétariens selon le niveau de diplôme",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 7 % des individus ayant Bac +5 ou plus déclarent avoir un régime alimentaire \nspécifique.",
+      sep = "\n"
+    ),
+    x = NULL,
+    y = "Proportion (en %)"
+  ) +
+  scale_y_continuous(
+    limits = c(0, max(tab$pct, na.rm = TRUE) * 1.15),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.caption = element_text(
+      hjust = 0,
+      size = 8.5,
+      colour = "grey30",
+      lineheight = 1.1,
+      margin = margin(t = 10)
+    )
+  )
+```
+
+On remarque que l'effet du diplôme est clair uniquement pour les bac +5 ou plus – et dans une certaine mesure les bac +3/+4. Ces niveaux d'études correspondent respectivement à l'obtention d'un master et à celle d'une licence. Dans ces cas, le diplôme augmente les chances d'avoir un régime alimentaire spécifique. En effet, un plus haut niveau de diplôme implique un capital culturel plus élevé. Cela signifie que les individus se sentent plus confiants et plus aptes à s'engager politiquement, en faveur de l'écologie par exemple ou de la protection des animaux ; engagement qui est souvent à la base de la conversion au végétarisme. Avoir fait des études longues veut aussi dire avoir été exposé au milieu étudiant pendant un certain temps, qui offre de nombreuses opportunités de s'engager dans le domaine militant, et permet également d'ouvrir ses fréquentations hors de son milieu d'origine.
+
+De façon surprenante au premier abord, l'obtention d'un diplôme de niveau bac +2, équivalent généralement à un DUT ou un BTS, fait reculer la proportion de végétariens. Cela correspond sans doute aux ouvriers et aux employés du premier tableau, qui sont peu à se déclarer végétariens. Par ailleurs, un effet d'âge peut intervenir car on sait que les études s'allongent au fur et à mesure que les générations se succèdent. Les générations les plus âgées sont donc surreprésentées chez les bac +2.
+
+Le résultat principal reste que le niveau de diplôme n'a pas une influence déterminante sur le choix de l'adoption d'un régime végétarien. La même chose peut être dite du niveau de revenu (cf. Annexe, Figure 15) qui n'a pas d'effet notable si l'on exclut les revenus inférieurs au salaire minimal, chez qui le végétarisme est plus fréquent (8 %) que chez le reste de la population.
+
+```{=latex}
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Il semble donc que le végétarisme soit une affaire de classe sociale plutôt que de niveau de diplôme ou de situation financière.  
+\end{tcolorbox}
+```
+
+### 1.1.2 – Végétarisme de nécessité et végétarisme de liberté
+
+Ces analyses nous permettent de conclure d'une part qu'il existe un végétarisme de liberté – il s'agit dans ce cas de cadres ou d'étudiants, très diplômés et possédant un revenu suffisant – et d'autre part qu'on trouve aussi un végétarisme de nécessité, lié à une contrainte économique.
+
+Le végétarisme de nécessité est présent chez les chômeurs, les personnes au foyer et les étudiants, lorsqu'ils sont caractérisés par un revenu inférieur au SMIC. On ne peut pas dire qu'il s'agisse d'un végétarisme de classe populaire, puisque le tableau 2 nous montre bien que les végétariens ne sont pas surreprésentés chez les ouvriers et les employés, et la figure 1 révèle que les individus possédant un bac +2 sont plutôt moins végétariens que la moyenne de la population. En effet, il ne faut pas oublier que la structure de la consommation ne dépend pas uniquement du revenu mais aussi de la culture, de la position sociale et de l'environnement \[Baudelot, Establet, 1994\]. On peut donc dire que les ouvriers et les employés consomment en suivant leur habitus de classe populaire. Ils favorisent donc la viande, qui est un symbole de virilité et de plaisir gustatif.
+
+Ainsi, on peut faire l'hypothèse que le végétarisme devient chez les inactifs une stratégie visant à réduire les dépenses du foyer, ce qui va à l'encontre de l'idée selon laquelle le végétarisme serait au contraire une pratique réservée aux plus riches. Si les substituts à la viande sont souvent onéreux, notamment lorsque l'on cherche à préserver une alimentation variée et comportant tous les apports nécessaires à un bon état de santé physique, leur consommation n'est pas une obligation. Il est possible de privilégier les œufs, moins chers que la viande, et les légumes.
+
+Par ailleurs, se passer de viande demande souvent un investissement en termes de temps, puisqu'il faut adapter les recettes que l'on connaît ou en trouver de nouvelles : il faut apprendre à découper et à cuire de nouveaux légumes par exemple, ou à préparer le tofu. Cela fait sens dans le cas des chômeurs, des étudiants et des personnes au foyer, qui sont caractérisés par un temps libre plus important que le reste de la population. On peut donc aussi voir cela comme un moyen de faire des économies en compensant par une hausse du temps passé à cuisiner. Enfin, le végétarisme peut être présenté par les individus comme un engagement, même s'il résulte en premier lieu ou en partie d'une contrainte financière, ce qui leur permet de réaliser un gain symbolique. Ils peuvent ainsi voir leur régime alimentaire non pas comme une privation ou comme le résultat d'un manque, mais comme un choix et donc une addition à leur vie.
+
+On observe également un végétarisme de liberté, qui est présent chez les cadres, indépendamment de leur niveau de revenu puisque lorsqu'on se situe au-dessus du SMIC la proportion de végétariens reste stable. Il s'agit donc dans ce cas d'un végétarisme lié à la classe sociale et non au statut financier.
+
+Cela est sans doute dû à la présence d'un capital culturel élevé au sein de cette classe sociale, qui les fait se sentir légitime à s'engager dans le domaine politique et militant à tous les niveaux, dont celui de la consommation. Il faut en effet rappeler que renoncer à la consommation de certains produits relève d'une forme de participation politique, qui exclut toute une partie de la population n'ayant pas forcément les ressources financières et informationnelles pour participer à cette forme de suffrage censitaire, élisant les produits dignes ou non d'être consommés \[Dubuisson-Quellier, 2009\].
+
+En outre, on peut faire l'hypothèse que l'adoption d'un régime végétarien est une pratique de distinction chez ces classes supérieures \[Bourdieu, 1979\]. La « réussite de végétarisme », c'est-à-dire maintenir une alimentation élaborée sans viande, devient une forme de capital. Cela permet à ces individus d'utiliser des dispositions alimentaires déjà acquises durant leur enfance, une forme d'ascétisme propre aux classes supérieures, afin de réaliser des gains symboliques \[Ouédraogo, 2020\]. Ce phénomène est particulièrement présent chez les individus souffrant d'un décalage entre leur positionnement social et leur capital de formation. En ce cas, le végétarisme les aide à combler symboliquement cet écart : ils sont peut-être déclassés socialement, n'ayant pas obtenu un emploi à la hauteur de leur ambition, mais ils maintiennent une rigueur dans leur hygiène de vie et leur engagement leur donne un statut.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Le végétarisme est présent dans toutes les couches du tissu social. Il s'exprime sous la forme d'un végétarisme de nécessité chez les inactifs disposant de faibles revenus, et sous celle d'un végétarisme de liberté chez les cadres.
+\end{tcolorbox}
+
+## 1.2  – Végétariennes et végétariens : liens entre genre, situation familiale et régime alimentaire
+
+Comme le souligne la sociologue Elizabeth Cherry, l'environnement et le réseau de pairs d'un individu peuvent faciliter ou entraver sa conversion au végétarisme. En ce sens, il paraît logique que la configuration familiale, ainsi que le rôle genré de l'individu au sein de son foyer influencent sa propension à l'adoption d'un régime alimentaire spécifique.
+
+### 1.2.1 – Le végétarisme est-il avant tout une affaire de femmes ?
+
+Deux points de pourcentage séparents végétariennes et végétariens, puisque 6 % des femmes interrogées déclarent suivre un régime alimentaire spécifique, tandis que ce n'est le cas que de 4 % des hommes. Une régression simple permet de déterminer qu'une femme à 1,5 fois plus de chances qu'un homme d'être végétarienne à niveau de diplôme égal, catégorie socio-professionnelle, âge, région de résidence et situation familiale identiques.
+
+En outre, on sait que les femmes qui se déclarent végétariennes ont moins tendance à faire des exceptions à leur régime : elles sont donc non seulement plus végétariennes mais aussi plus strictes sur la non-consommation de la viande \[Rosenfeld, 2020\]. Cela s'explique par le fait que les femmes se sentent moins facilement légitimes à défendre une cause que les hommes ; suivre rigoureusement leur régime leur permet de gagner en confiance dans leur statut de végétarienne.
+
+L'aspect genré du végétarisme est lié au fait que ce sont les femmes qui assurent la charge des approvisionnements alimentaires de la famille ainsi que la préparation des repas dans la majorité des cas \[Gojard, Lhuissier, Régnier, 2006\]. Ainsi, les femmes ont tendance à prendre davantage en compte les écolabels lorsqu'elles font leurs courses \[Coulangeon, Demoli, Ginsburger, Petev, 2023\]. L'engagement des femmes passe plus par le biais de la consommation que dans le cas des hommes, car elles y sont traditionnellement associées.
+
+Les motivations derrière l'adoption du régime végétarien ne sont pas les mêmes chez les hommes et chez les femmes. Les femmes deviennent plus souvent végétariennes car le bien-être animal leur tient à cœur, tandis que chez les hommes ce sont les préoccupations liées à la santé qui prennent une place plus importante \[Adamczyk, Maison, Modlinska, Pisula, 2020\]. Les femmes sont également légèrement plus nombreuses à évoquer le motif écologique comme raison de leur conversion. Au contraire, on peut expliquer la faible proportion d'hommes végétariens par l'association entre consommation de viande et virilité. Les hommes se convertissant au végétarisme sont plus susceptibles d'être jugés négativement par leurs pairs et par le reste de la société que les femmes.
+
+Toutefois, l'effet du genre varie également en fonction de la catégorie socio-professionnelle (cf. Annexes, Figure 16). On peut noter que l'écart entre végétariennes et végétariens est plus prononcé chez les cadres, les professions intermédiaires et les étudiants que chez les ouvriers et les employés. Les ouvrières sont même légèrement moins végétariennes en proportion que les ouvriers : 4 % contre 5 %.
+
+On peut en conclure que la classe sociale amplifie plus ou moins l'effet du genre. Cela dépend du type de végétarisme. Dans le cas du végétarisme de liberté, le fait d'être une femme augmente encore les chances d'être végétarienne, ce qui correspond bien avec l'idée qu'il s'agit avant tout d'un choix. Au contraire, le végétarisme de nécessité lisse les écarts entre hommes et femmes : il est de 1 % pour les chômeurs et les autres inactifs.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les femmes sont plus nombreuses à être végétariennes, et les modalités de leur végétarisme sont différentes. 
+\end{tcolorbox}
+
+### 1.2.2 – Les enfants : un frein à l’adoption du régime végétarien ?
+
+Plus encore peut-être que le genre, la configuration familiale et notamment la présence d'enfants au sein du foyer influence largement le choix du régime alimentaire, faisant reculer la proportion de végétariens (cf. Figure 2).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .cible_bin = ifelse(ali17 == "Oui", 1, 0),
+    .ligne = situation_fam
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svyby(
+  ~.cible_bin,
+  ~.ligne,
+  des_tmp,
+  svymean,
+  na.rm = TRUE
+) %>%
+  mutate(pct = round(.cible_bin * 100, 0)) %>%
+  arrange(.ligne)
+
+ggplot(tab, aes(x = .ligne, y = pct)) +
+  geom_col(
+    fill = "#52796F",
+    width = 0.6
+  ) +
+  geom_text(
+    aes(label = pct),
+    vjust = -0.4,
+    size = 3.5
+  ) +
+  labs(
+    title = "Figure 2 – Part des végétariens selon la configuration familiale",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 6 % des hommes seuls déclarent avoir un régime alimentaire spécifique.",
+      sep = "\n"
+    ),
+    x = NULL,
+    y = "Proportion (en %)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    plot.caption = element_text(
+      hjust = 0,
+      size = 8.5,
+      colour = "grey30",
+      lineheight = 1.1,
+      margin = margin(t = 10)
+    )
+  ) +
+  expand_limits(
+    y = max(tab$pct, na.rm = TRUE) * 1.15
+  )
+```
+
+La figure 2 montre assez nettement l'effet des enfants et du couple : 8 % des femmes seules sont végétariennes, contre 7 % des femmes avec enfants et seulement 4 % des couples avec enfants. Les enfants sont donc un déterminant négatif du végétarisme, tout comme le couple.
+
+Cela s'explique par le fait que les injonctions liées à la parentalité intiment aux parents de tout mettre en oeuvre pour que leur progéniture grandisse dans les meilleures conditions de santé possibles \[Gojard, 2000\]. Alimenter son enfant est un des rôles principaux des parents, et c'est donc tout naturellement que cette tâche fait l'objet de scrutations par le reste de la société. Elle mêle enjeu de santé et enjeu de transmission, car en faisant manger son enfant on lui transmet un mode de vie. Ainsi, la méfiance envers le régime végétarien, qui pourrait conduire à un état de santé dégradé et à un affaiblissement du corps de l'individu, est décuplé lorsqu'il s'agit d'un mineur. L'enfance est perçue comme moment crucial, où il faut manger équilibré pour grandir de façon optimale. Un parent faisant suivre un régime végétarien à son enfant s'expose donc à des critiques, l'accusant de faire passer ses croyances et ses convictions avant la bonne santé de sa progéniture.
+
+L'effet du couple est lui aussi important : le fait que le partenaire soit non-végétarien limite les possibilités pour le conjoint souhaitant réduire son apport carné, voire la consommation d'autres produits d'origine animale \[Asher, Cherry, 2015\]. Il est en effet plus compliqué de devoir préparer deux repas différents, ou de n'ajouter la protéine que dans l'un des plats car un seul membre du couple souhaite la consommer. De même, il est plus aisé de partager la charge mentale associée au végétarisme – comme le fait de rechercher un restaurant avec des options végétariennes – avec son conjoint. On peut faire l'hypothèse que le couple est d'autant plus crucial lorsqu'il s'agit d'un couple cohabitant, et que la majorité des repas sont partagés. De la même manière, la présence d'autres membres de la famille dans le foyer peut aussi compliquer la situation.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Le couple et la présence d'enfants dans le foyer agissent comme des freins au végétarisme, ce qui souligne l'importance du groupe de pairs dans l'adoption et le maintien du régime végétarien.
+\end{tcolorbox}
+
+## 1.3  – Végétarisme et génération : prédominance des régimes alimentaires spécifiques chez les jeunes ?
+
+Le végétarisme est souvent pensé comme un phénomène récent, ou du moins qui connaît une nouvelle popularité dans ces deux dernières décennies, et de ce fait s'adressant majoritairement aux jeunes. Qu'en est-il vraiment ? Observons la distribution par âge des végétariens (cf. Figure 3).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .cible_bin = ifelse(ali17 == "Oui", 1, 0),
+    .ligne = age_10
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svyby(
+  ~.cible_bin,
+  ~.ligne,
+  des_tmp,
+  svymean,
+  na.rm = TRUE
+) %>%
+  mutate(pct = round(.cible_bin * 100, 0)) %>%
+  arrange(.ligne)
+
+ggplot(tab, aes(x = .ligne, y = pct, group = 1)) +
+  geom_line(
+    color = "#84A98C",
+    linewidth = 1.2
+  ) +
+  geom_point(
+    color = "#84A98C",
+    size = 3
+  ) +
+  geom_text(
+    aes(label = pct),
+    vjust = -0.8,
+    size = 3.5
+  ) +
+  labs(
+    title = "Figure 3 – Part des végétariens selon la tranche d'âge",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : 7 % des individus de 26 à 35 ans déclarent avoir un régime alimentaire spécifique.",
+      sep = "\n"
+    ),
+    x = NULL,
+    y = "Proportion (en %)"
+  ) +
+  scale_y_continuous(
+    limits = c(0, max(tab$pct, na.rm = TRUE) * 1.15),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.caption = element_text(
+      hjust = 0,
+      size = 8.5,
+      colour = "grey30",
+      lineheight = 1.1,
+      margin = margin(t = 10)
+    )
+  )
+```
+
+Comme attendu, on constate que les végétariens sont plus nombreux parmi les 26-35 ans, où ils sont 7 %. C'est donc bien parmi les jeunes adultes que l'on retrouve le plus forte proportion de végétariens. Cela s'explique sans doute en partie par le fait que ces jeunes actifs sont plus diplômés que leurs aînés, puisque la durée des études à tendance à s'allonger avec les générations. Ils ont également plus de moyens financiers et ont eu d'avantage de temps pour développer leurs convictions morales et politiques que les 18-25 ans. En outre, ils sont moins susceptibles de vivre en couple ou avec des enfants que leurs aînés de 36-45 ans, mais ont aussi moins de chance de vivre avec leurs parents que les 18-25 ans. Cette configuration familiale est donc idéale pour l'adoption d'un régime végétarien.
+
+On perçoit en effet nettement l'effet de l'arrivée des enfants – et dans une moindre mesure de l'apparition du couple cohabitant – chez les 36-45 ans : ils ne sont plus que 5 % à se déclarer végétariens, contre 6 % pour les 46-55 ans, qui bénéficient peut-être du fait que les enfants ont quitté la maison ou du moins sont des adolescents.
+
+Pour ce qui est des plus de 56 ans, on a vraisembablement affaire à un effet de génération avant tout : les plus âgés se sentent moins concernés par l'écologie, puisqu'ils ne verront pas les conséquences du dérèglement climatiques à long-terme, et sont moins habitués à ces nouveaux modes d'expression politiques passant par la modification des produits consommés. Ils ont aussi tendance à préférer conserver leurs habitudes alimentaires, qui mettent la viande au centre du repas.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+La proportion de végétariens varie selon l'âge. L'effet de la configuration familiale prédomine chez les moins de 55 ans, tandis que c'est surtout l'effet de génération qui compte chez les plus âgés. 
+\end{tcolorbox}
+
+## 1.4 – L'ancrage spatial des végétariens
+
+Les végétariens sont-ils tous parisiens ? Les conditions que l'on retrouve dans les grandes agglomérations de métropole semblent être très propices à l'adoption d'un régime végétarien, contrairement à ce que l'on peut observer en milieu rural. De même, certaines spécificités régionales peuvent encourager ou au contraire freiner le développement du végétarisme au sein des populations.
+
+### 1.4.1 – Un phénomène urbain
+
+Il est intéressant de constater que la taille de la ville semble être corrélée positivement au taux de végétariens qui l'habitent (cf. Annexe, Tableau 5). En effet, on observe que seuls 4 % des individus vivant dans une commune rurale ou comportant moins de 20 000 habitants suivent un régime végétarien. Ils sont 5 % dans les villes moyennes, de 20 000 à 200 000 habitants, et 6 % dans les villes de plus de 200 000 habitants et au sein de l'agglomération parisienne.
+
+Cela s'explique d'abord par la composition des populations rurales et urbaines : les urbains sont en général plus diplômés, plus jeunes et touchent de plus hauts revenus. Par ailleurs, la proportion de cadres est plus importante dans les grandes villes et notamment à Paris. Tous ces facteurs augmentant les chances d'être végétariens, il n'est pas étonnant de constater que la population urbaine a une plus forte propension à suivre un régime alimentaire spécifique.
+
+En outre, le cadre de vie rural est moins adapté au végétarisme. En effet, il est propice à la pratique de la pêche et de la chasse, qui sont des loisirs ayant pour résultat la production et la consommation de chair animale. De plus, la campagne offre un choix de produits plus restreint dans les rayons des supermarchés et au menu des restaurants. Au contraire, les grandes villes sont susceptibles d'offrir d'avantage de services aux végétariens, comme des restaurants végétariens ou végans ou encore des boutiques spécialisées.
+
+Du point de vue régional, on observe également des différences comme l'illustre la figure 4.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 8
+
+url <- "https://france-geojson.gregoiredavid.fr/repo/regions.geojson"
+regions_sf <- st_read(url, quiet = TRUE)
+
+tab_reg <- svytable(~ region + ali17, design = df_svy)
+pct_reg <- prop.table(tab_reg, margin = 1) * 100
+
+df_pct <- data.frame(
+  region = rownames(pct_reg),
+  pct_oui = round(pct_reg[, "Oui"], 0)
+)
+
+region_map <- c(
+  "Île-de-France" = "Île-de-France",
+  "Grand-Est" = "Grand Est",
+  "Hauts-de-France" = "Hauts-de-France",
+  "Normandie" = "Normandie",
+  "Centre-Val de Loire" = "Centre-Val de Loire",
+  "Bourgogne-Franche-Comté" = "Bourgogne-Franche-Comté",
+  "Bretagne" = "Bretagne",
+  "Pays de la Loire" = "Pays de la Loire",
+  "Nouvelle-Aquitaine" = "Nouvelle-Aquitaine",
+  "Auvergne-Rhône-Alpes" = "Auvergne-Rhône-Alpes",
+  "Occitanie" = "Occitanie",
+  "PACA" = "Provence-Alpes-Côte d'Azur",
+  "Corse" = "Corse"
+)
+
+df_pct <- df_pct %>%
+  mutate(nom = sapply(region, function(x) region_map[x]))
+
+regions_sf_plot <- regions_sf %>%
+  filter(nom %in% df_pct$nom) %>%
+  left_join(df_pct, by = "nom")
+
+# Carte finale
+ggplot(regions_sf_plot) +
+  geom_sf(
+    aes(fill = pct_oui),
+    color = "white",
+    linewidth = 0.35
+  ) +
+  geom_sf_text(
+    aes(label = paste0(pct_oui, "%")),
+    size = 5,
+    color = "black"
+  ) +
+  scale_fill_gradientn(
+    colours = c(
+      "#F2FAF4",  # très clair
+      "#CCFFCC",  # ton vert menthe
+      "#84A98C",  # vert sauge
+      "#354F52"   # vert foncé
+    ),
+    values = scales::rescale(c(0, 2.5, 4, 6)),
+    limits = c(0, 6),
+    breaks = c(0, 2, 4, 6),
+    labels = function(x) paste0(x, " %"),
+    oob = scales::squish,
+    name = "Proportion de végétariens"
+  ) +
+  labs(
+    title = "Figure 4 – Part de végétariens par région",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France métropolitaine.",
+      "Lecture : En 2021, 6 % des individus résidant en Île-de-France déclarent avoir un régime alimentaire spécifique.",
+      sep = "\n"
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "right",
+
+    plot.title = element_text(
+      face = "bold",
+      size = 20
+    ),
+
+    plot.caption = element_text(
+      hjust = 0,
+      size = 14,
+      colour = "grey30",
+      lineheight = 1.1,
+      margin = margin(t = 10)
+    ),
+
+    legend.title = element_text(
+      size = 14
+    ),
+
+    legend.text = element_text(
+      size = 14
+    )
+  )
+```
+
+On peut y voir que les espaces les plus végétariens sont l'Ile-de-France et le Sud, ce qui s'explique sans doute par la présence de grandes villes (Paris, Lyon, Marseille, Nice, Bordeaux). Le régime méditerranéen, très répandu dans le Sud de la France, peut aussi expliquer une plus grande proportion de végétariens. Culturellement, l'attachement à la viande est moins important que dans d'autres régions, puisque ce sont surtout les légumes, les céréales, les fruits et les légumineuses qui sont au centre de l'alimentation, avec éventuellement du poisson.
+
+Le Nord et l'Ouest de la France sont moins végétariens, ce qui peut s'expliquer par des traditions culinaires différentes. Le Nord est plus proche de la cuisine flamande et germanique, ce qui place la viande de porc au centre des consommations. La Bretagne et la Normandie sont quant à elles réputées pour leur consommation de fruits de mer. En outre, la population de ces deux régions ainsi que celle des Pays de la Loire sont presque à 50 % rurales d'après les données de l'Insee.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens sont situés notamment dans les grandes villes, en Ile-de-France et dans le Sud de la France. 
+\end{tcolorbox}
+
+### 1.4.2 – Régimes alimentaires spécifiques et nationalité
+
+Les données permettent de savoir si les enquêtés sont nés ou non en France et s'ils ont ou non la nationalité française. Il est très intéressant de constater que les individus de nationalité étrangère sont plus nombreux en proportion à être végétariens (cf. Tableau 3).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+tab <- df_svy$variables %>%
+  filter(!is.na(pay4), !is.na(ali17)) %>%
+  mutate(
+    pay4 = case_when(
+      pay4 == "Française naissance" ~ "Nationalité française de naissance",
+      pay4 == "Française acquis/reintegration" ~ "Nationalité française acquise",
+      pay4 == "Etrangere" ~ "Nationalité étrangère",
+      TRUE ~ NA_character_
+    ),
+    pay4 = factor(
+      pay4,
+      levels = c(
+        "Nationalité française de naissance",
+        "Nationalité française acquise",
+        "Nationalité étrangère"
+      )
+    )
+  ) %>%
+  filter(!is.na(pay4)) %>%
+  count(pay4, ali17, wt = poids_ind_reg_std) %>%
+  group_by(pay4) %>%
+  mutate(
+    pct = round(n / sum(n) * 100, 0)
+  ) %>%
+  ungroup() %>%
+  filter(ali17 == "Oui") %>%
+  arrange(pay4) %>%
+  select(pay4, Pct = pct)
+
+tab %>%
+  gt(rowname_col = "pay4") %>%
+  cols_label(Pct = "") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  tab_header(
+    title = md("**Tableau 3 – Part des végétariens selon la nationalité**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 5 % des individus de nationalité française de naissance déclarent avoir un régime alimentaire spécifique.") %>%
+  tab_style(
+    style = cell_text(align = "left"),
+    locations = cells_stub()
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey70",
+      weight = px(1)
+    ),
+    locations = cells_stub()
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+On peut expliquer cette différence en partie par le statut des personnes ne possédant pas la nationalité française, puisque leurs ressources financières sont en général plus limitées que le reste de la population. Ainsi, ces individus seraient plus enclins à recourir à un végétarisme de nécessité. Par ailleurs, on sait que leur niveau de diplôme est en général plus faible que la moyenne, ce qui est aussi un facteur qui joue contre le végétarisme.
+
+On peut également supposer que la religion est un facteur à prendre en compte. En effet, 49 % des immigrés présents en France en 2025 viennent d'Afrique d'après les chiffres de l'Insee, avec notamment une forte immigration en provenance de l'Algérie, du Maroc ou encore de la Tunisie, qui sont des pays ayant comme religion officielle l'Islam. Etant donné que la question prise ici comme référence pour identifier les végétariens est "Avez-vous une habitude alimentaire spécifique de type végétarien ou vegan ?", il est probable qu'un régime halal puisse aussi très bien être identifié par les enquêtés comme un régime alimentaire spécifique. En outre, il peut être plus simple pour un individu souhaitant manger halal d'arrêter complètement de consommer de la viande pour ne pas avoir à faire attention à ce qu'il mange, par exemple dans une cantine, une cafétéria, au restaurant, *etc*.
+
+Enfin, il est possible que la culture culinaire joue aussi un rôle, comme dans le cas des régions. La cuisine française est en grande partie orientée vers le viande ou encore le fromage, ce qui est peu compatible avec l'adoption d'un régime alimentaire alternatif, mais ce n'est pas le cas de toutes les cuisines.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+La proportion de végétariens est plus importante chez les individus de nationalité étrangère. 
+\end{tcolorbox}
+
+Ainsi, si le végétarisme est présent dans toutes les couches de la population, il concerne surtout les cadres, dans le cas d'un végétarisme de liberté, et les inactifs précaires, dans le cas d'un végétarisme de nécessité. Les végétariens sont avant tout des jeunes de moins de 35 ans, des femmes, vivant dans des grandes villes, possédant un haut niveau de diplôme et un revenu supérieur au SMIC.

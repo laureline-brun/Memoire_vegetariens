@@ -1,0 +1,1150 @@
+---
+format:
+  pdf:
+    fontsize: 12pt
+    include-in-header:
+      text: |
+        \usepackage{tcolorbox}
+        \usepackage{setspace}
+        \setstretch{1.4}
+        \usepackage{xcolor}
+        \definecolor{vertmenthe}{RGB}{204,255,204}
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Préparation des tableaux.
+```
+
+```{r setup, include=FALSE}
+# chargement des packages
+library(haven)
+library(tidyverse)
+library(gtsummary)
+library(survey)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rnaturalearthhires)
+library(stringr)
+library(gt)
+#Pour les ACM :
+library(FactoMineR)
+library(factoextra)
+library(Factoshiny)
+library(explor)
+
+# chargement des bases
+bs20 <- read_dta("data/BS2020_minimisation.dta")
+bs21 <- read_dta("data/BS2021_minimisation.dta")
+
+# Options globales pour tous les chunks
+knitr::opts_chunk$set(fig.pos = 'H', fig.width = 6, fig.height = 4, fig.align = 'center' )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    pcs_complet = case_when(
+      sitprof == 2 ~ "Étudiant",
+      sitprof == 3 ~ "Chômeur",
+      sitprof == 4 ~ "Retraité",
+      sitprof == 5 ~ "Autres inactifs",
+
+      sitprof == 1 & pcs7 == 8 ~ NA_character_,
+
+      sitprof == 1 ~ as.character(haven::as_factor(pcs7)),
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    pcs_complet = forcats::fct_recode(
+      pcs_complet,
+      "Agriculteurs" = "Agriculteurs exploitants",
+      "Artisans, commerçants" = "Artisans, commerçants et chefs d'entreprise",
+      "Cadres" = "Cadres et professions intellectuelles supérieures"
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Recodage des variables utiles
+
+bs21 <- bs21 %>%
+  mutate(age_10 = case_when(
+    age_5 == 1 ~ "18-25",
+    age_5 %in% c(2,3) ~ "26-35",
+    age_5 %in% c(4,5) ~ "36-45",
+    age_5 %in% c(6,7) ~ "46-55",
+    age_5 %in% c(8,9) ~ "56-65",
+    age_5 %in% c(10,11) ~ "66-75",
+    age_5 %in% c(12,13) ~ "76-85",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(age_10 = factor(
+    age_10,
+    levels = c("18-25","26-35","36-45","46-55","56-65","66-75","76-85"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = case_when(
+    rsrev2 %in% c(1,2,3) ~ "< 600 €",
+    rsrev2 %in% c(4,5)   ~ "600–1200 €",
+    rsrev2 %in% c(6,7)   ~ "1200–2000 €",
+    rsrev2 %in% c(8,9)   ~ "2000–3000 €",
+    rsrev2 %in% c(10)    ~ "3000–4500 €",
+    rsrev2 %in% c(11)    ~ "4500–7600 €",
+    rsrev2 %in% c(12)    ~ "> 7600 €",
+    rsrev2 %in% c(13)    ~ "Refus",
+    rsrev2 %in% c(14)    ~ "NSP",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = factor(
+    revenu_tranches,
+    levels = c("< 600 €",
+               "600–1200 €",
+               "1200–2000 €",
+               "2000–3000 €",
+               "3000–4500 €",
+               "4500–7600 €",
+               "> 7600 €",
+               "Refus",
+               "NSP"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = case_when(
+
+      # Seul
+      typmen7 == 1 & sexe == 2 ~ "Femme seule",
+      typmen7 == 1 & sexe == 1 ~ "Homme seul",
+
+      # Monoparental
+      typmen7 == 2 & sexe == 2 ~ "Femme avec enfants",
+      typmen7 == 2 & sexe == 1 ~ "Homme avec enfants",
+
+      # Couples
+      typmen7 == 4 ~ "Couple avec enfants",
+      typmen7 == 3 ~ "Couple sans enfant",
+
+      # Autres
+      typmen7 == 5 ~ NA_character_,
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = factor(
+      situation_fam,
+      levels = c(
+        "Femme seule",
+        "Homme seul",
+        "Femme avec enfants",
+        "Homme avec enfants",
+        "Couple sans enfant",
+        "Couple avec enfants"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Création d'un survey design pour inclure la pondération.
+
+df <- bs21 %>%
+  select(qcpser, sexe,pcs7,diplome,va1,buv, alcr4, alcr1,aps1, aps3, aps5,aps9,age_10,revenu_tranches,pcs_complet, situation_fam,
+         ali1, ali2, ali3, ali4,ali10,ali13,ali17,buv,di13,ta1, di13, sexe, age_5,
+         infal0,ali19, ali18, enceint1, ta1, ta3,va1, va6, va10,ali14, ali15, ali19, 
+         ali9,ali7,imc3,age_5, senv1_1, senv1_2, senv1_3, senv1_4, senv1_5, senv2_1, senv2_2, senv2_3, senv2_4, senv2_5, senv4_1, senv4_2, senv4_3, senv4_4, senv4_5, senv5,
+         sm2,tax1,sg1,aps1, rsrev2,ras1, ras4, ras7, infal0, infal12,acc10_1,acc10_2, acc10_3,vit_avec_enfant, vit_seul, vit_en_couple, Continent, ists, sm25, sm35,
+         ists,sui1,sui6,sitprof, region, cat_agg6, pay1, pay4, al11, sg1, sg2, imc3, imc6, obesite, chgt_pds_5kg, chgt_pds_5kg_b, edmsymp,perturb,sm_EDC, ts_vie, sm_hadtot, typmen7,
+         poids_ind_reg_std, etud3,dip2 ) %>%
+  mutate(across(where(is.labelled), as_factor))
+
+df_svy <-
+  survey::svydesign(
+    id = ~qcpser,
+    weights = ~poids_ind_reg_std,
+    data = df
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Base ne contenant que les végétariens
+
+bs21v <- bs21 %>% filter(ali17==1)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+dfv <- bs21v %>%
+  select(qcpser, sexe,pcs7,diplome,va1,buv, alcr4, alcr1,aps1, aps3, aps5,aps9,age_10,revenu_tranches,pcs_complet, situation_fam,
+         ali1, ali2, ali3, ali4,ali10,ali13,ali17,buv,di13,ta1, di13, sexe, age_5,
+         infal0,ali19, ali18, enceint1, ta1, ta3,va1, va6, va10,ali14, ali15, ali19, 
+         ali9,ali7,imc3,age_5, senv1_1, senv1_2, senv1_3, senv1_4, senv1_5, senv2_1, senv2_2, senv2_3, senv2_4, senv2_5, senv4_1, senv4_2, senv4_3, senv4_4, senv4_5, senv5,
+         sm2,tax1,sg1,aps1, rsrev2,ras1, ras4, ras7, infal0, infal12,acc10_1,acc10_2, acc10_3,vit_avec_enfant, vit_seul, vit_en_couple, Continent, ists, sm25, sm35,
+         ists,sui1,sui6,sitprof, region, cat_agg6, pay1, pay4, al11, sg1, sg2, imc3, imc6, obesite, chgt_pds_5kg, chgt_pds_5kg_b, edmsymp,perturb,sm_EDC, ts_vie, sm_hadtot, typmen7,
+         poids_ind_reg_std, etud3,dip2 ) %>%
+  mutate(across(where(is.labelled), as_factor))
+
+df_svyv <-
+  survey::svydesign(
+    id = ~qcpser,
+    weights = ~poids_ind_reg_std,
+    data = dfv
+  )
+```
+
+# II – Quels comportements alimentaires et sanitaires pour la population végétarienne ?
+
+Maintenant que nous savons qui sont les végétariens, il convient de se demander quelles sont exactement leurs pratiques et ce qui les différencie du reste de la population. Puisque nous avons pu identifier différents profils de végétariens, il faut aussi regarder si les pratiques de ces sous-groupes sont distinctes et, si c'est le cas, de quelle façon. On peut faire l'hypothèse que les végétariens se soucient davantage de leur santé que le reste de la population, et qu'ils entretiennent avec elle un rapport plus investi.
+
+## 2.1 – Que mangent les végétariens ?
+
+Tout d'abord, même si la réponse peut sembler intuitive, il nous faut observer plus précisément la manière dont s'alimentent les végétariens.
+
+### 2.1.1 – Les végétariens et la verdure
+
+Pour ce faire, nous avons à disposition des variables nous permettant de connaître la fréquence de consommation des légumes, des fruits, des féculents complets et des légumineuses (cf. Figure 5).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+tab <- tibble(
+  indicateur = rep(
+    c(
+      "Légumes chaque jour",
+      "Fruits chaque jour",
+      "Féculents complets chaque jour",
+      "Légumes secs chaque semaine"
+    ),
+    each = 2
+  ),
+  groupe = rep(c("Végétariens", "Omnivores"), times = 4),
+  pct = c(
+    round(mean(bs21$ali1[bs21$ali17 == 1] == 1, na.rm = TRUE) * 100, 0),
+    round(mean(bs21$ali1[bs21$ali17 == 2] == 1, na.rm = TRUE) * 100, 0),
+
+    round(mean(bs21$ali4[bs21$ali17 == 1] == 1, na.rm = TRUE) * 100, 0),
+    round(mean(bs21$ali4[bs21$ali17 == 2] == 1, na.rm = TRUE) * 100, 0),
+
+    round(mean(bs21$ali7[bs21$ali17 == 1] == 1, na.rm = TRUE) * 100, 0),
+    round(mean(bs21$ali7[bs21$ali17 == 2] == 1, na.rm = TRUE) * 100, 0),
+
+    round(mean(bs21$ali10[bs21$ali17 == 1] == 1, na.rm = TRUE) * 100, 0),
+    round(mean(bs21$ali10[bs21$ali17 == 2] == 1, na.rm = TRUE) * 100, 0)
+  )
+)
+
+tab$indicateur <- factor(
+  tab$indicateur,
+  levels = rev(c(
+    "Légumes chaque jour",
+    "Fruits chaque jour",
+    "Féculents complets chaque jour",
+    "Légumes secs chaque semaine"
+  ))
+)
+
+tab$groupe <- factor(
+  tab$groupe,
+  levels = c("Omnivores", "Végétariens")
+)
+
+ggplot(tab, aes(x = pct, y = indicateur, fill = groupe)) +
+  geom_col(
+    position = position_dodge(width = 0.7),
+    width = 0.6
+  ) +
+  geom_text(
+    aes(label = pct),
+    position = position_dodge(width = 0.7),
+    hjust = -0.2,
+    size = 3.5
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Végétariens" = "#48676B",
+      "Omnivores" = "#D8C3B5"
+    )
+  ) +
+  labs(
+    title = "Figure 5 – Fréquence de consommation selon le régime \nalimentaire",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 86 % des végétariens déclarent consommer des légumes chaque jour.",
+      sep = "\n"
+    ),
+    x = "Proportion (en %)",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 14,
+      hjust = 0,
+      margin = margin(l = 12)
+    ),
+    plot.title.position = "plot",
+    plot.caption = element_text(
+      size = 9,
+      hjust = 0,
+      lineheight = 1.1,
+      margin = margin(t = 10, l = 12)
+    ),
+    plot.caption.position = "plot",
+    axis.text.y = element_text(size = 11),
+    legend.position = "bottom"
+  ) +
+  expand_limits(x = max(tab$pct, na.rm = TRUE) * 1.15)
+```
+
+On remarque tout d'abord que les végétariens consomment davantage d'aliments d'origine végétale, ce qui n'a rien de surprenant. L'écart est plus prononcé en ce qui concerne les légumes (12 %) que les fruits (9 %), étant donné que les fruits sont plutôt considérés comme un dessert, et leur consommation est donc a priori moins affectée par le choix d'un régime sans viande. De même, il existe un écart de 9 points de pourcentage pour les féculents complets, puisque le choix d'un aliment complet n'est pas une nécessité lorsque l'on suit un régime végétarien. Il semble donc logique que la différence entre végétariens et omnivores soit moins importante que dans le cas des légumes. L'écart le plus important se situe au niveau des légumes secs (22 %), ce qui s'explique par le fait que ces aliments sont riches en protéines, ce qui les rend parfaits pour compenser l'absence de produits d'origine animale dans un régime alimentaire.
+
+On peut donc en déduire que les végétariens, plus que le reste de la population, portent une attention particulière à leur santé, en faisant en sorte de garder un apport en protéines suffisant et en mangeant davantage de fruits et de féculents complets, nutritionnellement plus riches.
+
+Si l'on s'intéresse plus finement à la fréquence de consommation des aliments végétaux, on constate que les végétariens sont 40 % à manger plus de 3 légumes par jour, contre seulement 27 % du reste de la population (cf. Annexe, tableau 6). Ils sont en particulier 10 % (contre 4 %) à en manger plus de 5 par jour. On peut en outre supposer que les végétariens choisissent parmi un panel plus diversifié de légumes que les omnivores.
+
+Cependant, au sein du groupe des végétariens, les consommations ne sont pas les mêmes. Les végétariennes déclarent manger plus de légumes et de légumineuses que les végétariens, ce qui peut être révélateur d'une préoccupation décuplée pour la santé, et notamment concernant l'apport en fibres. On peut aussi supposer que les plus amples compétences culinaires des végétariennes leur permettent de cuisiner plus facilement des légumes variés. En effet, elles rapportent faire plus la cuisine que les végétariens, puisque 94 % d'entre elles déclarent cuisiner, ne serait-ce que de temps en temps, contre 87 % de leurs équivalents masculins (cf. Annexes, tableau 7).
+
+On retrouve aussi des différences au niveau de la catégorie socio-professionnelle : les cadres tendent à manger plus de légumes que les ouvriers et les employés, ainsi que les professions intermédiaires dans une certaine mesure. Au contraire, les ouvriers et les chômeurs déclarent consommer davantage de féculents complets. Cela renvoie certainement à un habitus de classe, qui veut que les individus issus des classes populaires aient l'habitude et le goût de manger des féculents, ce qui est moins le cas chez les classes supérieures.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens mangent plus d'aliments d'origine végétale que les omnivores, mais cette consommation reste segmentée en fonction du genre et de la classe sociale.
+\end{tcolorbox}
+
+### 2.1.2 – Les végétariens mangent-ils davantage de produits verts (bio) ?
+
+Les végétariens sont plus enclins à manger des produits issus de l'agriculture biologique : ils sont 23 % de plus à déclarer en consommer souvent par rapport aux omnivores (cf. Annexes, tableau 8). C'est l'inverse pour les boissons sucrées, puisque les omnivores en boivent 7 % de plus. Cela s'explique par un plus grand souci porté à leur alimentation et à leur santé.
+
+La question du bio est particulièrement intéressante car elle permet également de savoir si ces produits de consommation sont accessibles à tous les végétariens, et s'ils désirent les acquérir. En effet, les produits issus de l'agriculture biologique sont des produits coûteux, et leur consommation révèle en ce sens une certaine aisance financière et une appartenance de classe, ce qui fait écho au végétarisme de liberté. Cela permet aussi de regarder si les individus se soucient de leur santé, puisque ce choix alimentaire montre une volonté de ne pas consommer de pesticides.
+
+L'étude de la consommation des boissons sucrées permet de capter un autre marqueur de classe, renvoyant plutôt aux classes populaires, ce qui pourrait correspondre en partie aux végétariens par nécessité. Cela peut aussi être pris comme un signe d'une moindre importance accordée à la santé. En effet, on ne peut réduire la consommation de bio à une question de position sociale. L'écologie, et donc la consommation de produits issus de l'agriculture biologique, peut devenir une ressource de distinction pour des individus possédant un fort capital culturel, permettant d'illustrer sa maîtrise de soi et ses valeurs morales \[Elliott, 2013\]. Pour autant, on ne peut pas dire que seules les classes supérieures adoptent ce comportement alimentaire.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+ordre_pcs <- c(
+  "Agriculteurs et artisans",
+  "Cadres",
+  "Professions Intermédiaires",
+  "Employés",
+  "Ouvriers",
+  "Retraité",
+  "Chômeur",
+  "Étudiant",
+  "Autres inactifs"
+)
+
+df_tmp <- df_svyv$variables %>%
+  mutate(
+    .ligne = case_when(
+      pcs_complet %in% c("Agriculteurs", "Artisans, commerçants") ~
+        "Agriculteurs et artisans",
+      TRUE ~ as.character(pcs_complet)
+    ),
+
+    .ligne = factor(.ligne, levels = ordre_pcs),
+
+    .bio = case_when(
+      ali13 %in% c("Tous les jours ou presque", "Souvent") ~ "Souvent bio",
+      ali13 %in% c("Rarement", "Jamais") ~ "Jamais bio",
+      TRUE ~ NA_character_
+    ),
+
+    .boissons = case_when(
+      ali9 == "Oui" ~ "Boissons sucrées",
+      ali9 == "Non" ~ "Pas de boissons sucrées",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(.ligne))
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab_bio <- svytable(~ .ligne + .bio, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .bio,
+    values_from = Freq,
+    values_fill = 0
+  )
+
+tab_boissons <- svytable(~ .ligne + .boissons, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .boissons,
+    values_from = Freq,
+    values_fill = 0
+  )
+
+tab <- tab_bio %>%
+  left_join(tab_boissons, by = ".ligne") %>%
+  select(
+    .ligne,
+    `Souvent bio`,
+    `Jamais bio`,
+    `Boissons sucrées`,
+    `Pas de boissons sucrées`
+  ) %>%
+  arrange(.ligne)
+
+total_bio <- svytable(~ .bio, des_tmp) %>%
+  prop.table() %>%
+  as.data.frame()
+
+total_boissons <- svytable(~ .boissons, des_tmp) %>%
+  prop.table() %>%
+  as.data.frame()
+
+ligne_total <- tibble(
+  .ligne = "Total",
+  `Souvent bio` =
+    round(total_bio$Freq[total_bio$.bio == "Souvent bio"] * 100, 0),
+  `Jamais bio` =
+    round(total_bio$Freq[total_bio$.bio == "Jamais bio"] * 100, 0),
+  `Boissons sucrées` =
+    round(total_boissons$Freq[total_boissons$.boissons == "Boissons sucrées"] * 100, 0),
+  `Pas de boissons sucrées` =
+    round(total_boissons$Freq[total_boissons$.boissons == "Pas de boissons sucrées"] * 100, 0)
+)
+
+tab <- tab %>%
+  bind_rows(ligne_total)
+
+tab %>%
+  gt(rowname_col = ".ligne") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  tab_style(
+    style = cell_text(align = "center"),
+    locations = cells_column_labels(columns = everything())
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#CCFFCC"),
+    locations = cells_stub(rows = c("Cadres", "Ouvriers"))
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "#CCFFCC"),
+    locations = cells_body(rows = c("Cadres", "Ouvriers"))
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "left",
+      color = "black",
+      weight = px(1)
+    ),
+    locations = list(
+      cells_body(columns = `Boissons sucrées`),
+      cells_column_labels(columns = `Boissons sucrées`)
+    )
+  ) %>%
+  tab_header(
+    title = md("**Tableau 4 – Consommation de produits biologiques et de boissons sucrées au quotidien chez les végétariens selon la catégorie socio-professionnelle**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des végétariens âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 88 % des végétariens cadres déclarent manger souvent bio, et 12 % consomment des boissons sucrées tous les jours.") %>%
+  tab_source_note("Note : La modalité « Souvent bio » correspond aux individus déclarant manger bio souvent ou quotidiennement. La modalité « Jamais bio » correspond à ceux déclarant manger rarement ou jamais bio. La question sur les boissons sucrées porte sur la consommation quotidienne.") %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+Le tableau 4 montre que, parmi les végétariens, ce sont les cadres et les agriculteurs qui mangent le plus d'aliments issus de l'agriculture biologique, suivis par les professions intermédiaires. Les cadres sont aussi ceux qui consomment le moins de boissons sucrées chaque jour. On peut expliquer cela par un accès plus aisé aux aliments les plus chers, et par une volonté de maîtriser totalement son alimentation, dans une forme d'ascèse propre aux classes supérieures. Ainsi, le végétarisme de liberté se caractérise par une plus grande attention portée à la santé. Il ne s'agit pas seulement de cesser de manger de la viande, mais aussi de hiérarchiser les aliments en fonction de leurs qualités nutritionnelles et non seulement du plaisir gustatif.
+
+On constate que les végétariens qui consomment le moins de bio, et au contraire le plus de boissons sucrées se trouvent chez les ouvriers, les chômeurs, les étudiants et les autres inactifs. On retrouve donc ici les végétariens de nécessité, en ajoutant les ouvriers – qui sont en faible nombre, et dont on peut faire l'hypothèse qu'ils sont parmi ceux percevant les revenus les moins élevés. Ici, la consommation d'aliments bio est faible sans doute en partie à cause du prix, mais aussi car le végétarisme n'est pas vécu comme un choix de santé. La nourriture est avant tout perçue comme un moyen de subsistance et une source de plaisir, d'où le choix des boissons sucrées, dont le prix est en outre peu élevé.
+
+Notons que, malgré cela, la consommation de bio des végétariens de nécessité reste supérieure à celle des omnivores, qui sont 43 % à déclarer en manger souvent, contre 48 % pour les ouvriers végétariens (cf. Annexes, tableau 8). Le bio est un marqueur du végétarisme, même s'il existe un fort effet de la classe sociale, ce qui témoigne de la corrélation entre régime végétarien et préoccupation pour la santé. On ne peut pas dire de même des boissons sucrées : 27 % des omnivores disent en boire tous les jours contre, pour les végétariens, 38 % des ouvriers ou encore 29 % des étudiants.
+
+On peut également trouver une composante genrée à ce type de consommation, puisque les végétariens sont plus nombreux que les végétariennes à consommer du soda. Cela témoigne sans doute d'une moindre importance accordée à la santé. Il faut aussi tenir compte du fait que les femmes sont souvent plus inquiètes de leur apparence et de leur poids, ce qui les désincite à consommer des aliments réputés comme caloriques.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens consomment plus de produits bio et moins de boissons sucrées, notamment dans le cas du végétarisme de liberté. Le végétarisme de nécessité est caractérisé par un plus faible souci porté à la santé à travers l'alimentation.  
+\end{tcolorbox}
+
+## 2.2 – Végétarisme, drogues et médecine
+
+Quelle est l'attitude des végétariens vis-à-vis d'autres formes de consommation ? Il est intéressant de regarder le rapport qu'ils entretiennent avec l'alcool et le cannabis, puisque c'est aussi un élément qui entre dans la préservation – ou non – de la santé. En outre, regarder ce que pense les végétariens des vaccins permet de voir si leur rapport à la santé est classique, ou s'ils ressentent de la méfiance à l'égard de la médecine traditionnelle.
+
+### 2.2.1 – Des légumes à l'herbe. Les végétariens fument-ils davantage de cannabis ?
+
+Les végétariens sont-ils des gros consommateurs de cannabis, comme pourrait le vouloir le stéréotype ? On observe qu'ils sont 48 % à en avoir déjà fumé, contre 43 % pour les omnivores (cf. Annexes, tableau 9). Ce n'est pas un écart très élevé, il est probable que l'on puisse l'attribuer en grande partie aux caractéristiques socio-démographiques de la population végétarienne. En effet, l'usage du cannabis est plus répandu chez les jeunes et dans les zones à forte densité de population. On peut ajouter que l'usage de drogues telles que le cannabis est une forme de déviance, qui est surtout présente dans les groupes marginaux, or on peut dans une certaine mesure voir le végétarisme comme une transgression à la norme.
+
+Pour ce qui est de la consommation d'alcool, les végétariens sont 3 % de moins que les omnivores à déclarer en avoir déjà bu au cours de leur vie (cf. Annexes, tableau 9). Ils sont aussi légèrement moins nombreux en proportion à en avoir bu au cours des 12 derniers mois. Au contraire, ils déclarent davantage souhaiter réduire leur consommation d'alcool. Cela peut d'une part prouver que les végétariens sont plus soucieux de leur état de santé, et voient l'alcool comme une substance nocive. D'autre part, on peut faire l'hypothèse que les régimes alimentaires alternatifs dûs à la religion influencent aussi les réponses à cette question.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens ont plus tendance à avoir déjà fumé du cannabis, mais moins à avoir déjà bu de l'alcool. 
+\end{tcolorbox}
+
+### 2.2.2 – Les végétariens sont-ils antivax ?
+
+Les données permettent de s'intéresser à la façon dont les enquêtés perçoivent les vaccins. Il peut sembler cohérent que les végétariens, qui ont un mode de consommation alternatif, poursuivent cette tendance lorsqu'il s'agit de la médecine. Une défiance envers les vaccins ou plus largement la médecine traditionnelle peut être un prolongement de la méfiance envers la viande, ou encore les pesticides puisque la consommation de bio est répandue chez les végétariens.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .groupe = case_when(
+      ali17 == "Oui" ~ "Végétariens",
+      ali17 == "Non" ~ "Omnivores",
+      TRUE ~ NA_character_
+    ),
+
+    .vaccination = case_when(
+      va1 == "Tres" ~ "Très favorable",
+      va1 == "Plutot" ~ "Plutôt favorable",
+      va1 == "Plutôt" ~ "Plutôt favorable",
+      va1 == "Plutot pas" ~ "Plutôt défavorable",
+      va1 == "Pas du tout" ~ "Très défavorable",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(
+    !is.na(.groupe),
+    !is.na(.vaccination)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ .groupe + .vaccination, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(
+    pct = round(Freq * 100, 0),
+    .groupe = factor(
+      .groupe,
+      levels = c("Omnivores", "Végétariens")
+    ),
+    .vaccination = factor(
+      .vaccination,
+      levels = c(
+        "Très défavorable",
+        "Plutôt défavorable",
+        "Plutôt favorable",
+        "Très favorable"
+      )
+    )
+  )
+
+ggplot(tab, aes(x = pct, y = .groupe, fill = .vaccination)) +
+  geom_col(
+    position = "stack",
+    width = 0.6
+  ) +
+  geom_text(
+    aes(label = paste0(pct, "%")),
+    position = position_stack(vjust = 0.5),
+    size = 3.5
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Très favorable" = "#3D5A80",
+      "Plutôt favorable" = "#6C8EBF",
+      "Plutôt défavorable" = "#BFD7EA",
+      "Très défavorable" = "#EAF4FB"
+    ),
+    breaks = c(
+      "Très favorable",
+      "Plutôt favorable",
+      "Plutôt défavorable",
+      "Très défavorable"
+    )
+  ) +
+  labs(
+    title = "Figure 6 – Opinion sur la vaccination selon le régime\nalimentaire",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 35 % des végétariens se déclarent très favorables à la vaccination.",
+      sep = "\n"
+    ),
+    x = "Proportion (en %)",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 14,
+      hjust = 0,
+      margin = margin(l = 12)
+    ),
+    plot.title.position = "plot",
+    plot.caption = element_text(
+      size = 9,
+      hjust = 0,
+      lineheight = 1.1,
+      margin = margin(t = 10, l = 12)
+    ),
+    plot.caption.position = "plot",
+    axis.text.y = element_text(size = 11),
+    legend.position = "bottom"
+  )
+```
+
+La figure 6 montre que les végétariens sont légèrement moins à être favorables et très favorables aux vaccins : ils ne sont que 35 % à se déclarer très favorables contre 38 % des omnivores. Au contraire, ils sont davantage à indiquer être tout à fait opposés à la vaccination ; 10 % contre 7 % chez les non-végétariens.
+
+Cet écart est intéressant car on sait que les cadres sont en général favorables à la médecine traditionnelle, et qu'un haut niveau de diplôme conduit également à avoir une confiance accrue dans les vaccins. Ainsi, on ne peut pas expliquer ce résultat simplement en s'intéressant aux caractéristiques socio-démographiques du groupe formé par les végétariens. On peut d'ailleurs noter que, parmi les végétariens, ceux que nous avons identifiés comme végétariens de liberté – les cadres – sont bien plus favorables au vaccin que les végétariens de nécessité – les chômeurs, les ouvriers et les autres inactifs (cf. Annexes, tableau 10).
+
+Il faut donc expliquer cette méfiance envers les vaccins autrement. On peut dire que les végétariens entretiennent un rapport particulier à leur santé, différent de celui des omnivores, basé sur une envie de « naturel » : pas de pesticide, pas de vaccin, pas de viande – qui peut contenir des bactéries – et au contraire des légumes, si possible de provenance locale. Le rejet du vaccin est aussi souvent associé à une foi dans les médecines alternatives, jugées plus saines, plus accessibles. Il est aussi question de pouvoir prendre soi-même en main sa santé, sans se reposer sur des spécialistes, dont les méthodes peuvent sembler opaques. Se soigner via son alimentation, avec ses propres moyens, pourrait devenir une façon de reprendre le contrôle sur soi.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens sont plus défavorables aux vaccins que le reste de la population. Cela peut s'expliquer par un rapport particulier à la santé, qui privilégie les méthodes « naturelles ».
+\end{tcolorbox}
+
+## 2.3 – Un régime miracle pour rester en bonne santé ?
+
+L'état de santé des végétariens fait l'objet de beaucoup de spéculation : s'agirait-il d'un chemin vers une santé plus fragile, qui doit constamment être contrôlée pour éviter carences et problèmes médicaux, ou au contraire d'un régime rendant plus sain le corps ?
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .groupe = case_when(
+      ali17 == "Oui" ~ "Végétariens",
+      ali17 == "Non" ~ "Omnivores",
+      TRUE ~ NA_character_
+    ),
+
+    .imc = case_when(
+      imc3 == "Normal" ~ "Normal",
+      imc3 == "Surpoids" ~ "Surpoids",
+      imc3 == "Obesite" ~ "Obésité",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(
+    !is.na(.groupe),
+    !is.na(.imc)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ .groupe + .imc, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(
+    pct = round(Freq * 100, 0),
+    .groupe = factor(
+      .groupe,
+      levels = c("Omnivores", "Végétariens")
+    ),
+    .imc = factor(
+      .imc,
+      levels = c(
+        "Obésité",
+        "Surpoids",
+        "Normal"
+      )
+    )
+  )
+
+ggplot(tab, aes(x = pct, y = .groupe, fill = .imc)) +
+  geom_col(
+    position = "stack",
+    width = 0.6
+  ) +
+  geom_text(
+    aes(label = paste0(pct, "%")),
+    position = position_stack(vjust = 0.5),
+    size = 3.5
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Normal" = "#4B2E83",
+      "Surpoids" = "#9D7AD2",
+      "Obésité" = "#ECE4F8"
+    ),
+    breaks = c(
+      "Normal",
+      "Surpoids",
+      "Obésité"
+    )
+  ) +
+  labs(
+    title = "Figure 7 – IMC selon le régime alimentaire",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 69 % des végétariens ont un IMC normal.",
+      sep = "\n"
+    ),
+    x = "Proportion (en %)",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 14,
+      hjust = 0,
+      margin = margin(l = 12)
+    ),
+    plot.title.position = "plot",
+    plot.caption = element_text(
+      size = 9,
+      hjust = 0,
+      lineheight = 1.1,
+      margin = margin(t = 10, l = 12)
+    ),
+    plot.caption.position = "plot",
+    axis.text.y = element_text(size = 11),
+    legend.position = "bottom"
+  )
+```
+
+Lorsqu'on leur demande d'évaluer eux-mêmes leur état de santé physique, les végétariens ne se déclarent pas en meilleure santé que les omnivores. Evidemment, cela ne dit rien des risques et des bénéfices, vis-à-vis par exemple de certaines formes de cancer, liés à l'adoption d'un régime sans viande. Cependant, on peut affirmer que le végétarisme ne change pas la perception des individus de leur condition physique au quotidien.
+
+Toutefois, il est notable que les végétariens sont moins en surpoids que les omnivores, comme le montre la figure 7. Ainsi, ils sont 69 % à dire avoir un IMC normal, contre seulement 53 % des omnivores. Ils sont particulièrement protégés de l'obésité, qui ne concerne que 8 % d'entre eux, contre 15 % du reste de la population.
+
+Cela peut s'expliquer par le fait que, comme nous l'avons expliqué, les végétariens portent une plus grande attention à leur santé : le fait de consommer moins de boissons sucrées et plus de fruits par exemple peut conduire à un apport calorique plus faible, et donc un IMC lui aussi moins élevé. Il est aussi possible que l'ascétisme lié au végétarisme touche aussi à l'apparence, et que les végétariens aient plus tendance à souhaiter conserver une figure mince.
+
+En outre, les végétariens de liberté sont issus des classes supérieures, or on sait que cette fraction de la population a en moyenne un poids moins élevé que le reste des individus. Le contrôle de soi, et donc de son corps, est une composante importante de l'habitus bourgeois, tandis que les classes populaires favorisent au contraire un corps fonctionnel, en se souciant moins de sa valeur esthétique. On constate d'ailleurs que, parmi les végétariens, ce sont les cadres qui ont les IMC les plus faibles, tandis que les ouvriers et les retraités ont plus tendance à être en surpoids.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens ne se sentent pas en meilleure santé que le reste de la population, mais ils ont un IMC en moyenne plus faible.
+\end{tcolorbox}
+
+## 2.4 – Des végétariens écolos ?
+
+Il semble évident que les végétariens sont plus prompts à adhérer à la cause écologiste que le reste de la population, puisqu'il s'agit d'un des motifs principaux de conversion au végétarisme. Reste toutefois à déterminer l'ampleur de cet effet. Les données ne permettent de répondre que modestement à ces interrogations, car l'échantillon interrogé sur les questions de « santé environnementale » est petit, notamment lorsqu'on le croise avec la part des végétariens dans la base (5 %). Il est tout de même possible de donner quelques pistes de réflexion.
+
+### 2.4.1 – Une population mieux informée sur la cause écologiste ?
+
+Le questionnaire propose aux enquêtés d'évaluer leur niveau de connaissance sur certains sujets en lien avec l'environnement et la santé. Les végétariens sont-ils compétents sur les grands sujets de l'écologie ? Existerait-il une forme de capital écologiste, lié à l'engagement et l'activité militante qui concerne les végétariens ?
+
+Pour étudier cette question, j'ai créé un score d'information sur la cause environnementale, qui regroupe cinq questions posées aux enquêtés. On leur demande s'ils se considèrent bien ou mal informés sur les éventuels effets sur la santé de la pollution de l'air extérieur, du bruit, des évènements climatiques extrêmes, comme par exemple les canicules, les tempêtes ou les inondations, des métaux lourds comme par exemple le plomb ou le mercure et enfin de la pollution des sols. Le score obtenu par les végétariens et par les omnivores est présenté dans la figure 8.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 4
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .groupe = case_when(
+      ali17 == "Oui" ~ "Végétariens",
+      ali17 == "Non" ~ "Omnivores",
+      TRUE ~ NA_character_
+    ),
+
+    s1 = case_when(
+      senv1_1 == "Bien informe" ~ 1,
+      senv1_1 %in% c("Mal informe", "Jamais entendu parler") ~ 0,
+      TRUE ~ NA_real_
+    ),
+    s2 = case_when(
+      senv1_2 == "Bien informe" ~ 1,
+      senv1_2 %in% c("Mal informe", "Jamais entendu parler") ~ 0,
+      TRUE ~ NA_real_
+    ),
+    s3 = case_when(
+      senv1_3 == "Bien informe" ~ 1,
+      senv1_3 %in% c("Mal informe", "Jamais entendu parler") ~ 0,
+      TRUE ~ NA_real_
+    ),
+    s4 = case_when(
+      senv1_4 == "Bien informe" ~ 1,
+      senv1_4 %in% c("Mal informe", "Jamais entendu parler") ~ 0,
+      TRUE ~ NA_real_
+    ),
+    s5 = case_when(
+      senv1_5 == "Bien informe" ~ 1,
+      senv1_5 %in% c("Mal informe", "Jamais entendu parler") ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    .score_info_env = s1 + s2 + s3 + s4 + s5,
+
+    .score_info_env = factor(
+      .score_info_env,
+      levels = 0:5,
+      labels = c(
+        "Score 0",
+        "Score 1",
+        "Score 2",
+        "Score 3",
+        "Score 4",
+        "Score 5"
+      )
+    )
+  ) %>%
+  filter(
+    !is.na(.groupe),
+    !is.na(.score_info_env)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ .groupe + .score_info_env, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(
+    pct = round(Freq * 100, 0),
+    .groupe = factor(
+      .groupe,
+      levels = c("Omnivores", "Végétariens")
+    ),
+    .score_info_env = factor(
+      .score_info_env,
+      levels = c(
+        "Score 0",
+        "Score 1",
+        "Score 2",
+        "Score 3",
+        "Score 4",
+        "Score 5"
+      )
+    )
+  )
+
+ggplot(tab, aes(x = pct, y = .groupe, fill = .score_info_env)) +
+  geom_col(
+    position = "stack",
+    width = 0.6
+  ) +
+  geom_text(
+    aes(label = paste0(pct, "%")),
+    position = position_stack(vjust = 0.5),
+    size = 3.5
+  ) +
+  scale_fill_manual(
+  values = c(
+    "Score 0" = "#F2FAF4",
+    "Score 1" = "#CCFFCC",
+    "Score 2" = "#A8D5BA",
+    "Score 3" = "#84A98C",
+    "Score 4" = "#5F7F76",
+    "Score 5" = "#48676B"
+  ),
+  breaks = c(
+    "Score 0",
+    "Score 1",
+    "Score 2",
+    "Score 3",
+    "Score 4",
+    "Score 5"
+  ),
+  labels = c("0", "1", "2", "3", "4", "5"),
+  name = "Score"
+) +
+guides(
+  fill = guide_legend(
+    nrow = 1,
+    byrow = TRUE,
+    title.position = "top",
+    title.hjust = 0.5
+  )
+) +
+labs(
+  title = "Figure 8 – Niveau d’information sur les conséquences sur\nla santé des phénomènes environnementaux selon le\nrégime alimentaire",
+  caption = paste(
+    "Source : Baromètre santé 2021, Santé Publique France.",
+    "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+    "Lecture : En 2021, 21 % des végétariens se déclarent bien informés sur les conséquences sur la\nsanté de tous les phénomènes environnementaux présentés.",
+    "Note : Le score correspond au niveau d'information déclaré par les individus sur les conséquences\nsur la santé des phénomènes environnementaux. Il est créé à partir des réponses à 5 questions.",
+    sep = "\n"
+  ),
+  x = "Proportion (en %)",
+  y = NULL
+) +
+theme_minimal() +
+theme(
+  plot.title = element_text(
+    face = "bold",
+    size = 14,
+    hjust = 0,
+    margin = margin(l = 12)
+  ),
+  plot.title.position = "plot",
+
+  plot.caption = element_text(
+    size = 9,
+    hjust = 0,
+    lineheight = 1.1,
+    margin = margin(t = 10, l = 12)
+  ),
+  plot.caption.position = "plot",
+
+  axis.text.y = element_text(size = 11),
+
+  legend.position = "bottom",
+  legend.direction = "horizontal",
+  legend.title = element_text(
+    size = 10,
+    hjust = 0.5
+  ),
+  legend.text = element_text(size = 9)
+)
+```
+
+On remarque que, si la proportion de végétariens et d'omnivores ayant obtenu un score allant de 3 à 5 est plus ou moins identique, les végétariens sont plus nombreux à déclarer un score de 0 ou 1. Cela peut s'expliquer par plusieurs facteurs. Paradoxalement, le fait d'être sensible à un sujet ou d'avoir beaucoup de connaissances dans un domaine peut amener les individus à réaliser l'ampleur des informations qu'ils ne connaissent pas encore ou pas suffisamment. Cela est renforcé par le fait que la question invite à estimer soi-même son degré de connaissance, sans offrir de référentiel, en demandant par exemple de se situer vis-à-vis du reste de la population. L'appréciation de ce qu'est ou non un bon niveau d'information est dès lors très subjective.
+
+En outre, certains sujets évoqués dans les questions sont assez précis, si on considère par exemple les métaux lourds. Et il faut garder à l'esprit que l'on demande aux individus de réfléchir à l'effet de ces phénomènes sur la santé. Même si la santé est un thème qui tient à cœur aux végétariens, c'est sans doute moins le cas que la protection de l'environnement. Les réponses obtenues auraient donc pu être différentes si l'on avait posé des questions sur les conséquences de l'activité humaine sur l'environnement, en demandant aux enquêtés d'évaluer leurs connaissances vis-à-vis des autres individus, et en donnant des thèmes plus généraux. Quoiqu'il en soit, on peut surtout conclure à un manque de connaissances généralisé sur les sujets liés à l'environnement, que ce soit parmi les végétariens comme parmi les omnivores.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens ne se sentent pas mieux informés sur les conséquences sur la santé des phénomènes environnementaux tels que la pollution de l'air que le reste de la population, et ils ont même tendance à se trouver moins compétents. 
+\end{tcolorbox}
+
+### 2.4.2 – Des pratiques écologiques marquées
+
+Si les végétariens s'évaluent comme plutôt bien informés sur les sujets touchant à l'écologie, qu'en est-il de leurs pratiques ? Le fait de s'abstenir de consommer de la viande est un acte écologiste, même s'il n'est pas toujours vécu et revendiqué comme tel, et ce bien davantage que les autres pratiques évoquées dans le questionnaire en termes d'impact sur l'environnement. Il semblerait donc naturel que ces autres gestes écologistes suivent.
+
+Cette fois-ci, j'ai également élaboré un score, représenté dans la figure 9. Pour cela, j'ai regroupé les réponses à quatre questions. On demande aux enquêtés quelles mesures ils prennent, à leur niveau, pour améliorer la qualité de l'environnement et de leur santé. On leur demande alors s'ils privilégient les transports en commun, la bicyclette, la marche à pied ou s'ils pratiquent le co-voiturage, puis s'ils prennent en compte les émissions polluantes lors de l’achat de matériaux de bricolage, de construction ou de décoration, ensuite s'ils pratiquent le tri des déchets et enfin s'ils boycottent les entreprises qui polluent ou ne respectent pas l’environnement. Ils ont le choix de répondre à chacune de ces propositions par systématiquement, souvent, parfois ou jamais : j'ai choisi de regrouper systématiquement et souvent, ainsi que parfois et jamais pour faciliter l'analyse.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 4
+
+recode_eco <- function(x) {
+  case_when(
+    x %in% c("Systematiquement", "Souvent") ~ 1,
+    x %in% c("Parfois", "Jamais") ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .groupe = case_when(
+      ali17 == "Oui" ~ "Végétariens",
+      ali17 == "Non" ~ "Omnivores",
+      TRUE ~ NA_character_
+    ),
+
+    e1 = recode_eco(senv4_1),
+    e2 = recode_eco(senv4_2),
+    e3 = recode_eco(senv4_3),
+    e4 = recode_eco(senv4_4),
+
+    .valid_score = !is.na(e1) & !is.na(e2) & !is.na(e3) & !is.na(e4),
+
+    .score_pratiques_eco = ifelse(
+      .valid_score,
+      e1 + e2 + e3 + e4,
+      NA_real_
+    ),
+
+    .score_pratiques_eco = factor(
+      .score_pratiques_eco,
+      levels = 0:4,
+      labels = c(
+        "Score 0",
+        "Score 1",
+        "Score 2",
+        "Score 3",
+        "Score 4"
+      )
+    )
+  ) %>%
+  filter(
+    !is.na(.groupe),
+    .valid_score,
+    !is.na(.score_pratiques_eco)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ .groupe + .score_pratiques_eco, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(
+    pct = round(Freq * 100, 0),
+    .groupe = factor(
+      .groupe,
+      levels = c("Omnivores", "Végétariens")
+    ),
+    .score_pratiques_eco = factor(
+      .score_pratiques_eco,
+      levels = c(
+        "Score 0",
+        "Score 1",
+        "Score 2",
+        "Score 3",
+        "Score 4"
+      )
+    )
+  )
+
+ggplot(tab, aes(x = pct, y = .groupe, fill = .score_pratiques_eco)) +
+  geom_col(
+    position = "stack",
+    width = 0.6
+  ) +
+  geom_text(
+    aes(label = paste0(pct, "%")),
+    position = position_stack(vjust = 0.5),
+    size = 3.5
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Score 0" = "#F2FAF4",
+      "Score 1" = "#CCFFCC",
+      "Score 2" = "#84A98C",
+      "Score 3" = "#5F7F76",
+      "Score 4" = "#48676B"
+    ),
+    breaks = c(
+      "Score 0",
+      "Score 1",
+      "Score 2",
+      "Score 3",
+      "Score 4"
+    ),
+    labels = c("0", "1", "2", "3", "4"),
+    name = "Score"
+  ) +
+  guides(
+    fill = guide_legend(
+      nrow = 1,
+      byrow = TRUE,
+      title.position = "top",
+      title.hjust = 0.5
+    )
+  ) +
+  labs(
+    title = "Figure 9 – Score de pratiques écologiques selon le régime\nalimentaire",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 29 % des végétariens déclarent avoir de nombreuses pratiques écologiques.",
+      "Note : Le score correspond a été créé à partir des réponses à 4 questions portant sur les pratiques écologiques.",
+      sep = "\n"
+    ),
+    x = "Proportion (en %)",
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 14,
+      hjust = 0,
+      margin = margin(l = 12)
+    ),
+    plot.title.position = "plot",
+
+    plot.caption = element_text(
+      size = 8,
+      hjust = 0,
+      lineheight = 1,
+      margin = margin(t = 5, l = 12)
+    ),
+    plot.caption.position = "plot",
+
+    axis.text.y = element_text(size = 11),
+
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9)
+  )
+```
+
+La figure 9 nous révèle que les végétariens sont bien plus nombreux en proportion à déclarer un grand nombre de pratiques écologiques que les omnivores. Ils sont 29 % à réaliser tous les gestes de protection de la planète décris précédemment, contre seulement 14 % des omnivores, et aucun d'entre eux ne s'abstient de tout geste écologique, alors que c'est le cas de 4 % du reste de la population. Il est à noter que ce module intervient avant celui sur l'alimentation, et donc avant la question sur le végétarisme, donc il n'y a pas de biais qui conduirait les individus à vouloir passer pour de bons végétariens face aux enquêteurs.
+
+On peut expliquer ces résultats par la sensibilité accrue des végétariens à la cause écologiste. Ce n'est pas surprenant que cet engagement se manifeste à travers des gestes du quotidien, plutôt que par exemple à travers le vote – bien que l'on puisse sans doute observer un phénomène similaire – car le végétarisme est déjà une action individuelle, de consommateur. Cela signifie que les végétariens croient, dans une certaine mesure, à l'intérêt et l'importance de ces pratiques à l'échelle de l'individu, et y voient un mode d'action légitime contre le dérèglement climatique. Par ailleurs, deux des questions incluent dans ce score portent directement sur la consommation, puisqu'on demande s'ils prennent en compte les émissions avant d'acheter des produits autres qu'alimentaires et s'ils pratiquent le boycott – le végétarisme étant une forme de boycott.
+
+En outre, pour les végétariens de liberté, issus des classes supérieures, la sensibilité écologique peur devenir une source de distinction : le végétarisme écologique témoigne d'une vertu environnementale, qui leur permet de réaliser des gains symboliques sans remettre en cause leur mode de vie global \[Grossetête, 2019\]. Or, on sait que ce sont leurs pratiques qui génèrent le plus d'effets négatifs sur l'environnement, tandis qu'au contraire ils sont ceux qui subissent le moins les conséquences du dérèglement climatique. Face à cette réalité, le végétarisme peut agir comme un masque, qui rend acceptable leur style de vie polluant.
+
+\begin{tcolorbox}[colback=vertmenthe,colframe=vertmenthe]
+Les végétariens réalisent plus de pratiques écologiques au quotidien que le reste de la population.
+\end{tcolorbox}
+
+Ainsi, on a montré que les végétariens ont une alimentation qui diffère de celle des omnivores, non seulement car ils ne mangent pas de viande mais aussi car ils consomment différement les légumes, les produits bio et les boissons sucrées. Ils ont également un rapport à la santé particulier, puisque c'est un enjeu plus important pour eux que le reste de la population, et qu'ils privilégient les moyens naturels de préserver son état physique, et si possible sans l'intermédiaire d'un tiers. Enfin, ils sont plus sensibles à l'écologie que les omnivores comme en témoignent leurs pratiques écologiques plus développées. Cependant, ces constats ne sont pas identiques pour les végétariens de nécessité et pour les végétariens de liberté, puisque pour ces derniers la santé est une composante plus importante de leur choix de régime alimentaire.

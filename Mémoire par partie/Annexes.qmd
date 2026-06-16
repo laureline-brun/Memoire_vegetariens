@@ -1,0 +1,1709 @@
+---
+format:
+  pdf:
+    documentclass: scrartcl
+    fontsize: 12pt
+    toc: false
+    colorlinks: false
+    include-in-header:
+      text: |
+        \usepackage{tcolorbox}
+        \usepackage{setspace}
+        \setstretch{1.4}
+        \usepackage{xcolor}
+        \definecolor{vertmenthe}{RGB}{204,255,204}
+execute:
+  cache: false
+  freeze: false
+editor: visual
+---
+
+```{r setup, include=FALSE}
+# chargement des packages
+library(haven)
+library(tidyverse)
+library(gtsummary)
+library(survey)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rnaturalearthhires)
+library(stringr)
+library(gt)
+#Pour les ACM :
+library(FactoMineR)
+library(factoextra)
+library(Factoshiny)
+library(explor)
+
+# chargement des bases
+bs20 <- read_dta("data/BS2020_minimisation.dta")
+bs21 <- read_dta("data/BS2021_minimisation.dta")
+
+# Options globales pour tous les chunks
+knitr::opts_chunk$set(fig.pos = 'H', fig.width = 6, fig.height = 4, fig.align = 'center' )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    pcs_complet = case_when(
+      sitprof == 2 ~ "Étudiant",
+      sitprof == 3 ~ "Chômeur",
+      sitprof == 4 ~ "Retraité",
+      sitprof == 5 ~ "Autres inactifs",
+
+      sitprof == 1 & pcs7 == 8 ~ NA_character_,
+
+      sitprof == 1 ~ as.character(haven::as_factor(pcs7)),
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    pcs_complet = forcats::fct_recode(
+      pcs_complet,
+      "Agriculteurs" = "Agriculteurs exploitants",
+      "Artisans, commerçants" = "Artisans, commerçants et chefs d'entreprise",
+      "Cadres" = "Cadres et professions intellectuelles supérieures"
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Recodage des variables utiles
+
+bs21 <- bs21 %>%
+  mutate(age_10 = case_when(
+    age_5 == 1 ~ "18-25",
+    age_5 %in% c(2,3) ~ "26-35",
+    age_5 %in% c(4,5) ~ "36-45",
+    age_5 %in% c(6,7) ~ "46-55",
+    age_5 %in% c(8,9) ~ "56-65",
+    age_5 %in% c(10,11) ~ "66-75",
+    age_5 %in% c(12,13) ~ "76-85",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(age_10 = factor(
+    age_10,
+    levels = c("18-25","26-35","36-45","46-55","56-65","66-75","76-85"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = case_when(
+    rsrev2 %in% c(1,2,3) ~ "< 600 €",
+    rsrev2 %in% c(4,5)   ~ "600–1200 €",
+    rsrev2 %in% c(6,7)   ~ "1200–2000 €",
+    rsrev2 %in% c(8,9)   ~ "2000–3000 €",
+    rsrev2 %in% c(10)    ~ "3000–4500 €",
+    rsrev2 %in% c(11)    ~ "4500–7600 €",
+    rsrev2 %in% c(12)    ~ "> 7600 €",
+    rsrev2 %in% c(13)    ~ "Refus",
+    rsrev2 %in% c(14)    ~ "NSP",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = factor(
+    revenu_tranches,
+    levels = c("< 600 €",
+               "600–1200 €",
+               "1200–2000 €",
+               "2000–3000 €",
+               "3000–4500 €",
+               "4500–7600 €",
+               "> 7600 €",
+               "Refus",
+               "NSP"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    pcs_complet = case_when(
+      sitprof == 2 ~ "Étudiants",
+      sitprof == 3 ~ "Chômeurs",
+      sitprof == 4 ~ "Retraités",
+      sitprof == 5 ~ "Autres inactifs",
+
+      sitprof == 1 & pcs7 == 8 ~ NA_character_,
+
+      sitprof == 1 ~ as.character(haven::as_factor(pcs7)),
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    pcs_complet = forcats::fct_recode(
+      pcs_complet,
+      "Agriculteurs" = "Agriculteurs exploitants",
+      "Artisans, commerçants" = "Artisans, commerçants et chefs d'entreprise",
+      "Cadres" = "Cadres et professions intellectuelles supérieures"
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = case_when(
+
+      # Seul
+      typmen7 == 1 & sexe == 2 ~ "Femme seule",
+      typmen7 == 1 & sexe == 1 ~ "Homme seul",
+
+      # Monoparental
+      typmen7 == 2 & sexe == 2 ~ "Femme avec enfants",
+      typmen7 == 2 & sexe == 1 ~ "Homme avec enfants",
+
+      # Couples
+      typmen7 == 4 ~ "Couple avec enfants",
+      typmen7 == 3 ~ "Couple sans enfant",
+
+      # Autres
+      typmen7 == 5 ~ NA_character_,
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = factor(
+      situation_fam,
+      levels = c(
+        "Femme seule",
+        "Homme seul",
+        "Femme avec enfants",
+        "Homme avec enfants",
+        "Couple sans enfant",
+        "Couple avec enfants"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Création d'un survey design pour inclure la pondération.
+
+df <- bs21 %>%
+  select(qcpser, sexe,pcs7,diplome,va1,buv, alcr4, alcr1,aps1, aps3, aps5,aps9,age_10,revenu_tranches,pcs_complet, situation_fam,
+         ali1, ali2, ali3, ali4,ali10,ali13,ali17,buv,di13,ta1, di13, sexe, age_5,
+         infal0,ali19, ali18, enceint1, ta1, ta3,va1, va6, va10,ali14, ali15, ali19, 
+         ali9,ali7,imc3,age_5, senv1_1, senv1_2, senv1_3, senv1_4, senv1_5, senv2_1, senv2_2, senv2_3, senv2_4, senv2_5, senv4_1, senv4_2, senv4_3, senv4_4, senv4_5, senv5,
+         sm2,tax1,sg1,aps1, rsrev2,ras1, ras4, ras7, infal0, infal12,acc10_1,acc10_2, acc10_3,vit_avec_enfant, vit_seul, vit_en_couple, Continent, ists, sm25, sm35,
+         ists,sui1,sui6,sitprof, region, cat_agg6, pay1, pay4, al11, sg1, sg2, imc3, imc6, obesite, chgt_pds_5kg, chgt_pds_5kg_b, edmsymp,perturb,sm_EDC, ts_vie, sm_hadtot, typmen7,
+         poids_ind_reg_std, etud3,dip2 ) %>%
+  mutate(across(where(is.labelled), as_factor))
+
+df_svy <-
+  survey::svydesign(
+    id = ~qcpser,
+    weights = ~poids_ind_reg_std,
+    data = df
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Base ne contenant que les végétariens
+
+bs21v <- bs21 %>% filter(ali17==1)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+dfv <- bs21v %>%
+  select(qcpser, sexe,pcs7,diplome,va1,buv, alcr4, alcr1,aps1, aps3, aps5,aps9,age_10,revenu_tranches,pcs_complet, situation_fam,
+         ali1, ali2, ali3, ali4,ali10,ali13,ali17,buv,di13,ta1, di13, sexe, age_5,
+         infal0,ali19, ali18, enceint1, ta1, ta3,va1, va6, va10,ali14, ali15, ali19, 
+         ali9,ali7,imc3,age_5, senv1_1, senv1_2, senv1_3, senv1_4, senv1_5, senv2_1, senv2_2, senv2_3, senv2_4, senv2_5, senv4_1, senv4_2, senv4_3, senv4_4, senv4_5, senv5,
+         sm2,tax1,sg1,aps1, rsrev2,ras1, ras4, ras7, infal0, infal12,acc10_1,acc10_2, acc10_3,vit_avec_enfant, vit_seul, vit_en_couple, Continent, ists, sm25, sm35,
+         ists,sui1,sui6,sitprof, region, cat_agg6, pay1, pay4, al11, sg1, sg2, imc3, imc6, obesite, chgt_pds_5kg, chgt_pds_5kg_b, edmsymp,perturb,sm_EDC, ts_vie, sm_hadtot, typmen7,
+         poids_ind_reg_std, etud3,dip2 ) %>%
+  mutate(across(where(is.labelled), as_factor))
+
+df_svyv <-
+  survey::svydesign(
+    id = ~qcpser,
+    weights = ~poids_ind_reg_std,
+    data = dfv
+  )
+```
+
+# Conclusion
+
+Le végétarisme fait l'objet de nombreuses interrogations et spéculations quant au statut social de ses adeptes, à leurs convictions et leurs motivations ainsi qu'à leur état de santé. Nous avons vu que l'on ne pouvait résumer les végétariens en une catégorie uniforme, en commençant par la forme de végétarisme choisie jusqu'aux pratiques alimentaires concrètes.
+
+Le premier chapitre a permis de montrer que le végétarisme était présent dans l'ensemble du tissu social, mais qu'il y avait davantage de végétariennes que de végétariens, et qu'on les trouvaient généralement parmi les jeunes adultes, vivant dans de grandes métropoles et possédant un haut niveau de diplôme et un revenu supérieur au salaire minimal. Par ailleurs, nous avons pu établir une distinction entre végétarisme de nécessité et végétarisme de liberté. Le végétarisme de nécessité concerne surtout les inactifs et les étudiants, touchant un revenu faible. Ils peuvent souhaiter adopter un régime alimentaire alternatif pour réaliser des économies, étant donné le coût souvent élevé de la viande. Cela peut leur permettre de donner une dimension positive à un acte de privation. Au contraire, le végétarisme de liberté concerne plutôt les professions intermédiaires et les cadres, caractérisés par leur revenu et leur niveau de diplôme plus hauts. Ces végétariens renoncent à la viande sans l'incitation d'une contrainte financière. On peut alors attribuer leur conversion au végétarisme à une volonté d'engagement.
+
+Le second chapitre nous a donné une meilleure idée des pratiques alimentaires concrètes des végétariens. Nous avons pu constater que leur alimentation diffère de celles des omnivores car ils mangent bien plus fréquemment des fruits, des légumes, des légumes secs, des féculents complets et des produits issus de l'agriculture biologique, tandis qu'au contraire ils délaissent les boissons sucrées. Cela peut s'expliquer par la volonté d'éviter les carences, ce qui les pousse à se soucier davantage de leurs apports quotidiens. Cela témoigne aussi d'une attention plus développée pour leur état de santé, notamment dans le cas du bio et des sodas. On peut dire que les végétariens se préoccupent davantage de leur condition physique, à travers le prisme de l'alimentation, que le reste de la population. Ce rapport particulier à la santé peut être étendu au-delà de cette seule sphère, puisqu'il est notable que les végétariens sont aussi davantage à adopter une attitude de méfiance envers les vaccins. Cette défiance à l'encontre de la médecine traditionnelle signifie sans doute qu'ils privilégient un rapport direct de l'individu à son corps et à sa santé. Cela va avec l'idée de prendre soin de soi-même à travers les gestes du quotidien, comme la façon de se nourrir. Il y a aussi une dimension de désir de retour au naturel dans ce rapport au corps, puisqu'il s'agit dans le cas du bio de refuser les pesticides. En outre, nous avons pu apprendre que les végétariens, s'ils ne se sentent pas mieux informés sur les conséquences des phénomènes environnementaux sur la santé que le reste de la population, sont plus prompts à réaliser des gestes écologiques au quotidien. Cela peut vouloir dire boycotter certaines entreprises polluantes ou encore moins prendre la voiture. Toutefois, tous ces constats ne doivent pas être généralisés car ils dépendent du type de végétariens concernés. En effet, les végétariens de liberté sont plus nombreux à se soucier de leur santé, consommer bio, réduire les sodas, *etc*. tandis que c'est moins le cas des végétariens de nécessité.
+
+Le troisième chapitre a été l'occasion de replacer les végétariens dans un espace des pratiques alimentaires, de sorte à tester la dichotomie proposée dans le premier chapitre. Cela a permis de montrer qu'il existait bien un groupe de végétariens de nécessité, associés avec un moindre souci pour la santé se manifestant dans l'alimentation et avec des caractéristiques socio-démographiques propres aux classes populaires. En ce qui concerne les végétariens de liberté, il a été possible de les classer en deux groupes légèrement distincts. Le premier concerne surtout des flexitariens, dont il est manifeste qu'ils sont à part du reste de l'échantillon. Il s'agit de cadres, très diplômés et percevant de hauts revenus, et qui font preuve d'un grand souci pour leur santé, en adoptant des pratiques alimentaires très vertueuses. Le second est composé d'individus appartenant à la classe moyenne supérieure éduquée, engagés dans un régime alimentaire plus strict puisque ce sont pour la plupart des végétariens. Leur alimentation est également très saine, mais leur choix de régime nous laisse à penser que ce n'est pas la seule motivation de leur conversion au végétarisme. Une analyse légèrement différente, dans laquelle un échantillon d'omnivores a été ajouté, a permis de mieux comprendre les relations entre végétariens et consommateurs de viande. Les résultats soulignent une certaine homogénéité du bloc des végétariens, tandis que les flexitariens d'une part et les omnivores de l'autre se distinguent assez nettement. Il est notable que les flexitariens ne sont pas proches des omnivores comme l'on pourrait s'y attendre, parce qu'ils sont très distingués par leur grand souci pour la santé, qui n'est pas du tout présent chez les omnivores.
+
+Ainsi, ce travail a permis de mettre en lumière les caractéristiques qui font l'unité du groupe des végétariens, tout en montrant que ce bloc pouvait être découpé, et ne devait pas être considéré comme sociologiquement homogène. En fonction de leur classe sociale, les végétariens n'ont pas les mêmes pratiques alimentaires ni les mêmes motifs d'adoption de ce régime alimentaire alternatif. Il serait utile de pouvoir examiner de plus près ces différentes raisons expliquant la conversion d'un individu au végétarisme, en ayant accès à des données sur le sujet, incluant le motif sanitaire, le motif écologique et celui de la protection animale.
+
+\newpage
+
+# Bibliographie
+
+[Allès B.]{.smallcaps}, [Baudry J.]{.smallcaps}, [Méjean C.]{.smallcaps}, [Touvier M.]{.smallcaps}, [Péneau S.]{.smallcaps}, [Hercberg S.]{.smallcaps}, [Kesse-Guyot E.]{.smallcaps}, 2017, « Comparison of Sociodemographic and Nutritional Characteristics between Self-Reported Vegetarians, Vegans, and Meat-Eaters from the NutriNet-Santé Study », *Nutrients*, *9*, 9, p. 1023.
+
+[Baudelot C.]{.smallcaps}, [Establet R.]{.smallcaps}, s. d., *Maurice Halbwachs. Consommation et société*, PUF.
+
+[Beardsworth A.]{.smallcaps}, [Bryman A.]{.smallcaps}, 1999, « Meat consumption and vegetarianism among young adults in the UK: An empirical study », *British Food Journal*, *101*, 4, p. 289‑300.
+
+[Becker H.]{.smallcaps}, 1963, *Outsiders: Studies in the Sociology of Deviance*, Free Press of Glencoe, 320 p.
+
+[Bourdieu P.]{.smallcaps}, 1979, *La Distinction: Critique sociale du jugement*, Minuit, 592 p.
+
+[Cherry E.]{.smallcaps}, 2006, « Veganism as a Cultural Movement: A Relational Approach », *Social Movement Studies*, *5*, 2, p. 155‑170.
+
+[Cherry E.]{.smallcaps}, [Asher K.]{.smallcaps}, s. d., « Home Is Where the Food Is: Barriers to Vegetarianism and Veganism in the Domestic Sphere », *Journal for Critical Animal Studies*.
+
+[Demoli Y.]{.smallcaps}, [Ginsburger M.]{.smallcaps}, [Coulangeon P.]{.smallcaps}, [Petev]{.smallcaps}, 2023, *La conversion écologique des Français: Contradictions et clivages*, Humensis, 272 p.
+
+[Douglas M.]{.smallcaps}, \[1966\] 1971, *De la souillure. Essai sur les notions de pollution et de tabou*, Editions Maspero, Paris.
+
+[Dubuisson-Quellier S.]{.smallcaps}, 2018, *La consommation engagée*, Presses de Sciences Po, 160 p.
+
+[Elliott R.]{.smallcaps}, 2013, « The taste for green: The possibilities and dynamics of status differentiation through “green” consumption », *Poetics*, *41*, 3, p. 294‑322.
+
+[Gojard S.]{.smallcaps}, 2000, « L’alimentation dans la prime enfance. Diffusion et réception des normes de puériculture », *Revue française de sociologie*, *41*, 3, p. 475‑512.
+
+[Gojard S.]{.smallcaps}, [Lhuissier A.]{.smallcaps}, [Régnier F.]{.smallcaps}, 2006, *Sociologie de l’alimentation*, La Découverte, (Repères), 121 p.
+
+[Grossetête M.]{.smallcaps}, 2019, « Quand la distinction se met au vert : Conversion écologique des modes de vie et démarcations sociales », *Revue Française de Socio-Économie*, *22*, 1, p. 85‑105.
+
+[Hondermarck A.]{.smallcaps}, 2025, *Réforme sociale et réforme de soi: une sociologie historique du végétarisme en France (années 1870-années 1930)*, Thèse de doctorat, 682 p.
+
+[Kemper J.A.]{.smallcaps}, 2020, « Motivations, barriers, and strategies for meat reduction at different family lifecycle stages », *Appetite*, *150*, p. 104644.
+
+[Lanauze G.S. de]{.smallcaps}, [Sirieix L.]{.smallcaps}, 2021, « Influences sociales et dissonance normative : le cas du végétarisme », *Décisions Marketing*, *103*, 3, p. 33‑54.
+
+[Mauss M.]{.smallcaps}, 2002, *Les techniques du corps*, Chicoutimi, J.-M. Tremblay (Classiques des sciences sociales.).
+
+[Michielsen Y.J.E.]{.smallcaps}, [Horst H.M. van der]{.smallcaps}, [Dibbits H.]{.smallcaps}, 2024, « (M)eating Out?: Understanding tensions between the established practice of eating out and changing discourses on meat and plant-based consumption », *ESA’24 Porto 16th conference : Tension, Trust, and Transformation*, p. 162‑162.
+
+[Modlinska K.]{.smallcaps}, [Adamczyk D.]{.smallcaps}, [Maison D.]{.smallcaps}, [Pisula W.]{.smallcaps}, 2020, « Gender Differences in Attitudes to Vegans/Vegetarians and Their Food Preferences, and Their Implications for Promoting Sustainable Dietary Patterns–A Systematic Review », *Sustainability*, *12*, 16, p. 6292.
+
+[Oncini F.]{.smallcaps}, [Triventi M.]{.smallcaps}, 2021, « Ascent of the herbivores, decline of the carnivores: The social stratification of eating profiles in Italy, 1997–2016 », *Poetics*, *87*, p. 101533.
+
+[Ouédraogo A.P.]{.smallcaps}, 2020, « Les végétariens en France : esquisse d’un profil », *Sesame*, *7*, 1, p. 58‑59.
+
+[Pape M.-C.L.]{.smallcaps}, [Plessz M.]{.smallcaps}, 2017, « C’est l’heure du petit-déjeuner ? Rythme des repas, incorporation et classe sociale », *L’Année sociologique*, *67*, 1, p. 73‑106.
+
+[Plessz M.]{.smallcaps}, 2013, « Les légumes transformés : diversité des produits, diversité des usages sociaux », *Revue d’Études en Agriculture et Environnement*, *94*, 1, p. 13‑37.
+
+[Rosenfeld D.L.]{.smallcaps}, 2020, « Gender differences in vegetarian identity: How men and women construe meatless dieting », *Food Quality and Preference*, *81*, p. 103859.
+
+[Souillier N.]{.smallcaps}, [Richard J.-B.]{.smallcaps}, [Gautier A.]{.smallcaps}, 2022, « Baromètre de Santé publique France 2021. Méthode », p. 17.
+
+[SPF]{.smallcaps}, 2022, « Baromètre de Santé publique France 2021. Questionnaire / Volet métropole. », p. 43.
+
+[SPF]{.smallcaps}, 2025, « Baromètre de Santé Publique France 2024. Questionnaire. », p. 112.
+
+[Traïni C.]{.smallcaps}, 2011, *La Cause animale (1820-1980). Essai de sociologie historique*, PUF, Association pour le développement de la sociologie du travail, 234 p.
+
+[Traïni C.]{.smallcaps}, 2012, « Entre dégoût et indignation morale:Sociogenèse d’une pratique militante », *Revue française de science politique*, *62*, 4, p. 559‑581.
+
+[Traïni C.]{.smallcaps}, 2021, « Entre pratiques intimes et sphère publique:Comment les engagements militants affectent la vie quotidienne ? », *Sociétés contemporaines*, *123*, 3, p. 135‑162.
+
+[Warde A.]{.smallcaps}, [Martens L.]{.smallcaps}, [Olsen W.]{.smallcaps}, 1999, « Consumption and the problem of variety: Cultural omnivorousness, social distinction and dining out », *Sociology*, *33*, 1, p. 105‑127.
+
+\newpage
+
+# Annexes
+
+## Chapitre 1
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Figure 15, végétarisme selon le niveau de revenu.
+#1.1.1
+
+ordre_revenu <- c(
+  "NSP",
+  "< 600 €",
+  "600–1200 €",
+  "1200–2000 €",
+  "2000–3000 €",
+  "3000–4500 €",
+  "4500–7600 €",
+  "> 7600 €",
+  "Refus"
+)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .cible_bin = ifelse(ali17 == "Oui", 1, 0),
+    .ligne = factor(revenu_tranches, levels = ordre_revenu)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svyby(
+  ~.cible_bin,
+  ~.ligne,
+  des_tmp,
+  svymean,
+  na.rm = TRUE
+) %>%
+  mutate(pct = round(.cible_bin * 100, 0)) %>%
+  arrange(.ligne)
+
+ggplot(tab, aes(x = pct, y = .ligne)) +
+  geom_col(fill = "palegreen3", width = 0.6) +
+  geom_text(
+    aes(label = paste0(pct)),
+    hjust = -0.2,
+    size = 3.5
+  ) +
+  labs(
+    title = "Figure 15 - Part des végétariens selon le niveau de revenu",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 7,2 % des individus ayant Bac +5 ou plus déclarent avoir un régime alimentaire spécifique.",
+      sep = "\n"
+    ),
+    x = "Proportion (en %)",
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.caption = element_text(
+      hjust = 0,
+      size = 8.5,
+      colour = "grey30",
+      lineheight = 1.1,
+      margin = margin(t = 10)
+    )
+  ) +
+  expand_limits(x = max(tab$pct, na.rm = TRUE) * 1.15)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Figure 16, sexe et pcs.
+#1.2.1
+
+ordre_pcs <- c(
+  "Agriculteurs",
+  "Artisans, commerçants",
+  "Cadres",
+  "Professions Intermédiaires",
+  "Employés",
+  "Ouvriers",
+  "Retraité",
+  "Chômeur",
+  "Étudiant",
+  "Autres inactifs"
+)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .cible_bin = ifelse(ali17 == "Oui", 1, 0),
+    .ligne = factor(pcs_complet, levels = ordre_pcs),
+    .col = sexe
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svyby(
+  ~.cible_bin,
+  ~.ligne + .col,
+  des_tmp,
+  svymean,
+  na.rm = TRUE
+) %>%
+  mutate(pct = round(.cible_bin * 100, 0)) %>%
+  arrange(.ligne, .col)
+
+ggplot(tab, aes(x = pct, y = .ligne, fill = .col)) +
+  geom_col(
+    position = "dodge",
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = pct),
+    position = position_dodge(width = 0.7),
+    hjust = -0.2,
+    size = 3.2,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Homme" = "darkorchid1",
+      "Femme" = "mediumturquoise"
+    )
+  ) +
+  labs(
+    title = "Figure 16 - Part des végétariens selon la catégorie socio-professionnelle et le sexe",
+    caption = paste(
+      "Source : Baromètre santé 2021, Santé Publique France.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : En 2021, 9 % des femmes cadres déclarent avoir un régime alimentaire spécifique.",
+      sep = "\n"
+    ),
+    x = "Proportion (en %)",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    plot.caption = element_text(
+      hjust = 0,
+      size = 8.5,
+      colour = "grey30",
+      lineheight = 1.1,
+      margin = margin(t = 10)
+    )
+  ) +
+  expand_limits(
+    x = max(tab$pct, na.rm = TRUE) * 1.15
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Tableau 5, végétarisme selon la taille d'agglo.
+# 1.4.1
+
+ordre_cat_agg6 <- c(
+  "Rural",
+  "Moins de 20 000 habitants",
+  "20 000 à 99 999 habitants",
+  "Plus de 100 000 habitants",
+  "Agglomération parisienne"
+)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    cat_agg6_txt = as.character(haven::as_factor(cat_agg6)),
+    ali17_txt = as.character(haven::as_factor(ali17))
+  ) %>%
+  filter(
+    ali17_txt %in% c("Oui", "Non"),
+    !is.na(cat_agg6_txt)
+  ) %>%
+  mutate(
+    cat_agg6_rec = case_when(
+      cat_agg6_txt == "Rural" ~ "Rural",
+      cat_agg6_txt == "< 20 000" ~ "Moins de 20 000 habitants",
+      cat_agg6_txt == "20 000 - 99 999" ~ "20 000 à 99 999 habitants",
+      cat_agg6_txt %in% c("100 000 - 199 999", ">= 200 000") ~ "Plus de 100 000 habitants",
+      cat_agg6_txt == "Agglomération parisienne" ~ "Agglomération parisienne",
+      TRUE ~ NA_character_
+    ),
+    cat_agg6_rec = factor(cat_agg6_rec, levels = ordre_cat_agg6),
+    ali17_txt = factor(ali17_txt, levels = c("Oui", "Non"))
+  ) %>%
+  filter(!is.na(cat_agg6_rec))
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ cat_agg6_rec + ali17_txt, design = des_tmp)
+
+tab <- prop.table(tab, margin = 1) * 100
+
+tab <- as.data.frame.matrix(round(tab, 0)) %>%
+  rownames_to_column("cat_agg6") %>%
+  select(cat_agg6, Oui) %>%
+  rename(`Végétariens (%)` = Oui)
+
+tab %>%
+  gt() %>%
+  cols_label(
+    cat_agg6 = "Taille de l’agglomération",
+    `Végétariens (%)` = "Végétariens (%)"
+  ) %>%
+  fmt_number(
+    columns = `Végétariens (%)`,
+    decimals = 0
+  ) %>%
+  tab_header(
+    title = md("**Tableau 5 – Part des végétariens selon la taille de l’agglomération**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 6 % des individus vivant dans l'agglomération parisienne déclarent avoir un régime alimentaire spécifique.") %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey60",
+      weight = px(1)
+    ),
+    locations = cells_body(columns = cat_agg6)
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey60",
+      weight = px(1)
+    ),
+    locations = cells_column_labels(columns = cat_agg6)
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+\newpage
+
+## Chapitre 2
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Fréquence de consommation des légumes selon le régime alimentaire.
+# 2.1.1
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    ali17_txt = as.character(haven::as_factor(ali17)),
+    ali2_txt = as.character(haven::as_factor(ali2))
+  ) %>%
+  filter(
+    ali17_txt %in% c("Oui", "Non"),
+    !is.na(ali2_txt),
+    ali2_txt != "Ne sait pas"
+  ) %>%
+  mutate(
+    ali17_txt = case_when(
+      ali17_txt == "Oui" ~ "Végétariens",
+      ali17_txt == "Non" ~ "Non-végétariens"
+    ),
+    ali2_txt = case_when(
+      ali2_txt == "1" ~ "1",
+      ali2_txt == "2" ~ "2",
+      ali2_txt == "3" ~ "3",
+      ali2_txt == "4" ~ "4",
+      str_detect(ali2_txt, "^5") ~ "5 ou +",
+      TRUE ~ ali2_txt
+    ),
+    ali2_txt = factor(
+      ali2_txt,
+      levels = c("1", "2", "3", "4", "5 ou +")
+    ),
+    ali17_txt = factor(
+      ali17_txt,
+      levels = c("Végétariens", "Non-végétariens")
+    )
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ ali2_txt + ali17_txt, design = des_tmp)
+
+tab <- prop.table(tab, margin = 2) * 100
+
+tab <- as.data.frame.matrix(round(tab, 0)) %>%
+  rownames_to_column("ali2") %>%
+  select(ali2, Végétariens, `Non-végétariens`)
+
+tab %>%
+  gt() %>%
+  cols_label(
+    ali2 = "Nombre de portions de légumes par jour",
+    Végétariens = "Végétariens (%)",
+    `Non-végétariens` = "Non-végétariens (%)"
+  ) %>%
+  fmt_number(
+    columns = c(Végétariens, `Non-végétariens`),
+    decimals = 0
+  ) %>%
+  tab_header(
+    title = md("**Tableau 6 – Nombre de portions de légumes consommées quotidiennement selon le régime alimentaire**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 18 % des végétariens déclarent consommer une portion de légumes par jour.") %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey60",
+      weight = px(1)
+    ),
+    locations = cells_body(columns = ali2)
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey60",
+      weight = px(1)
+    ),
+    locations = cells_column_labels(columns = ali2)
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Cuisine selon le sexe.
+#2.1.1
+
+tab <- svytable(~ sexe + infal0, design = df_svyv)
+
+pct <- prop.table(tab, margin = 1) * 100
+
+tab_gt <- as.data.frame.matrix(round(pct, 0)) %>%
+  rownames_to_column("sexe") %>%
+  mutate(
+    sexe = case_when(
+      sexe == "1" ~ "Homme",
+      sexe == "2" ~ "Femme",
+      TRUE ~ sexe
+    )
+  ) %>%
+  select(sexe, Oui, Non)
+
+tab_gt %>%
+  gt() %>%
+  cols_label(
+    sexe = "Sexe",
+    Oui = "Oui (%)",
+    Non = "Non (%)"
+  ) %>%
+  fmt_number(
+    columns = c(Oui, Non),
+    decimals = 0
+  ) %>%
+  tab_header(
+    title = md("**Tableau 7 – Fréquence de la pratique culinaire chez les végétariens selon le sexe**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus végétariens âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 87 % des hommes végétariens déclarent cuisiner ne serait-ce que de temps en temps.") %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey60",
+      weight = px(1)
+    ),
+    locations = cells_body(columns = sexe)
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "right",
+      color = "grey60",
+      weight = px(1)
+    ),
+    locations = cells_column_labels(columns = sexe)
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Végé et bio/boissons sucrées
+#2.1.2 (x2)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .vegetarien = case_when(
+      ali17 == "Oui" ~ "Végétariens",
+      ali17 == "Non" ~ "Omnivores",
+      TRUE ~ NA_character_
+    ),
+
+    .bio = case_when(
+      ali13 %in% c("Tous les jours ou presque", "Souvent") ~ "Mangent bio",
+      ali13 %in% c("Rarement", "Jamais") ~ "Ne mangent pas bio",
+      TRUE ~ NA_character_
+    ),
+
+    .boissons = case_when(
+      ali9 == "Oui" ~ "Boissons sucrées",
+      ali9 == "Non" ~ "Pas de boissons sucrées",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(.vegetarien))
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab_bio <- svytable(~ .vegetarien + .bio, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .bio,
+    values_from = Freq,
+    values_fill = 0
+  )
+
+tab_boissons <- svytable(~ .vegetarien + .boissons, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .boissons,
+    values_from = Freq,
+    values_fill = 0
+  )
+
+tab <- tab_bio %>%
+  left_join(tab_boissons, by = ".vegetarien")
+
+tab %>%
+  gt(rowname_col = ".vegetarien") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  tab_style(
+    style = cell_text(align = "center"),
+    locations = cells_column_labels(columns = everything())
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "left",
+      color = "black",
+      weight = px(1)
+    ),
+    locations = list(
+      cells_body(columns = `Boissons sucrées`),
+      cells_column_labels(columns = `Boissons sucrées`)
+    )
+  ) %>%
+  tab_header(
+    title = md("**Tableau 8 – Consommation de produits biologiques et de boissons sucrées selon le régime alimentaire**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 66 % des végétariens déclarent manger souvent bio et 20 % déclarent ne pas consommer de boissons sucrées tous les jours.") %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Végé et alcool/cannabis
+#2.2.1 (x2)
+
+df_tmp <- df_svy$variables %>%
+  mutate(
+    .groupe = case_when(
+      ali17 == "Oui" ~ "Végétariens",
+      ali17 == "Non" ~ "Omnivores",
+      TRUE ~ NA_character_
+    ),
+
+    .alcool = case_when(
+      al11 == "Oui" ~ "Alcool",
+      al11 == "Non" ~ "Pas d'alcool",
+      TRUE ~ NA_character_
+    ),
+
+    .cannabis = case_when(
+      di13 == "Oui" ~ "Cannabis",
+      di13 == "Non" ~ "Pas de cannabis",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(.groupe))
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab_alcool <- svytable(~ .groupe + .alcool, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .alcool,
+    values_from = Freq,
+    values_fill = 0
+  )
+
+tab_cannabis <- svytable(~ .groupe + .cannabis, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .cannabis,
+    values_from = Freq,
+    values_fill = 0
+  )
+
+tab <- tab_alcool %>%
+  left_join(tab_cannabis, by = ".groupe") %>%
+  mutate(
+    ordre = case_when(
+      .groupe == "Végétariens" ~ 1,
+      .groupe == "Omnivores" ~ 2,
+      TRUE ~ 99
+    )
+  ) %>%
+  arrange(ordre) %>%
+  select(-ordre)
+
+tab %>%
+  gt(rowname_col = ".groupe") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  tab_style(
+    style = cell_text(align = "center"),
+    locations = cells_column_labels(columns = everything())
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "left",
+      color = "black",
+      weight = px(1)
+    ),
+    locations = list(
+      cells_body(columns = `Cannabis`),
+      cells_column_labels(columns = `Cannabis`)
+    )
+  ) %>%
+  tab_header(
+    title = md("**Tableau 9 – Consommation d'alcool et de cannabis selon le régime alimentaire**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 91 % des végétariens déclarent avoir déjà consommé de l'alcool au cours de leur vie.") %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#Vaccination et pcs
+#2.2.2
+
+ordre_pcs <- c(
+  "Agriculteurs",
+  "Artisans, commerçants",
+  "Cadres",
+  "Professions Intermédiaires",
+  "Employés",
+  "Ouvriers",
+  "Retraité",
+  "Chômeur",
+  "Étudiant",
+  "Autres inactifs"
+)
+
+ordre_vaccination <- c(
+  "Très favorable",
+  "Plutôt favorable",
+  "Plutôt défavorable",
+  "Très défavorable"
+)
+
+df_tmp <- df_svyv$variables %>%
+  mutate(
+    .ligne = factor(pcs_complet, levels = ordre_pcs),
+
+    .vaccination = case_when(
+      va1 == "Tres" ~ "Très favorable",
+      va1 == "Plutot" ~ "Plutôt favorable",
+      va1 == "Plutôt" ~ "Plutôt favorable",
+      va1 == "Plutot pas" ~ "Plutôt défavorable",
+      va1 == "Pas du tout" ~ "Très défavorable",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(
+    !is.na(.ligne),
+    !is.na(.vaccination)
+  ) %>%
+  mutate(
+    .vaccination = factor(.vaccination, levels = ordre_vaccination)
+  )
+
+des_tmp <- svydesign(
+  id = ~qcpser,
+  weights = ~poids_ind_reg_std,
+  data = df_tmp
+)
+
+tab <- svytable(~ .ligne + .vaccination, des_tmp) %>%
+  prop.table(margin = 1) %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .vaccination,
+    values_from = Freq,
+    values_fill = 0
+  ) %>%
+  select(
+    .ligne,
+    `Très favorable`,
+    `Plutôt favorable`,
+    `Plutôt défavorable`,
+    `Très défavorable`
+  )
+
+tab_total <- svytable(~ .vaccination, des_tmp) %>%
+  prop.table() %>%
+  as.data.frame() %>%
+  mutate(Freq = round(Freq * 100, 0)) %>%
+  tidyr::pivot_wider(
+    names_from = .vaccination,
+    values_from = Freq,
+    values_fill = 0
+  ) %>%
+  mutate(.ligne = "Total") %>%
+  select(
+    .ligne,
+    `Très favorable`,
+    `Plutôt favorable`,
+    `Plutôt défavorable`,
+    `Très défavorable`
+  )
+
+tab <- bind_rows(tab, tab_total)
+
+tab %>%
+  gt(rowname_col = ".ligne") %>%
+  fmt_number(columns = everything(), decimals = 0) %>%
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  tab_style(
+    style = cell_text(align = "center"),
+    locations = cells_column_labels(columns = everything())
+  ) %>%
+  tab_header(
+    title = md("**Tableau 10 – Opinion sur la vaccination chez les végétariens selon la catégorie socio-professionnelle**")
+  ) %>%
+  tab_source_note("Source : Baromètre santé 2021, Santé Publique France.") %>%
+  tab_source_note("Champ : Ensemble des végétariens âgés de 18 à 85 ans résidant en France.") %>%
+  tab_source_note("Lecture : En 2021, 50 % des végétariens cadres se déclarent très favorables à la vaccination.") %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    source_notes.font.size = px(12),
+    heading.align = "left"
+  )
+```
+
+\newpage
+
+## Chapitre 3
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(age_10 = case_when(
+    age_5 == 1 ~ "18-25",
+    age_5 %in% c(2,3) ~ "26-35",
+    age_5 %in% c(4,5) ~ "36-45",
+    age_5 %in% c(6,7) ~ "46-55",
+    age_5 %in% c(8,9) ~ "56-65",
+    age_5 %in% c(10,11) ~ "66-75",
+    age_5 %in% c(12,13) ~ "76-85",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(age_10 = factor(
+    age_10,
+    levels = c("18-25","26-35","36-45","46-55","56-65","66-75","76-85"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = case_when(
+    rsrev2 %in% c(1,2,3) ~ "< 600 €",
+    rsrev2 %in% c(4,5)   ~ "600–1200 €",
+    rsrev2 %in% c(6,7)   ~ "1200–2000 €",
+    rsrev2 %in% c(8,9)   ~ "2000–3000 €",
+    rsrev2 %in% c(10)    ~ "3000–4500 €",
+    rsrev2 %in% c(11)    ~ "4500–7600 €",
+    rsrev2 %in% c(12)    ~ "> 7600 €",
+    rsrev2 %in% c(13)    ~ "Refus",
+    rsrev2 %in% c(14)    ~ "NSP",
+    TRUE ~ NA_character_
+  ))
+
+bs21 <- bs21 %>%
+  mutate(revenu_tranches = factor(
+    revenu_tranches,
+    levels = c("< 600 €",
+               "600–1200 €",
+               "1200–2000 €",
+               "2000–3000 €",
+               "3000–4500 €",
+               "4500–7600 €",
+               "> 7600 €",
+               "Refus",
+               "NSP"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    pcs_complet = case_when(
+      sitprof == 2 ~ "Étudiants",
+      sitprof == 3 ~ "Chômeurs",
+      sitprof == 4 ~ "Retraités",
+      sitprof == 5 ~ "Autres inactifs",
+
+      sitprof == 1 & pcs7 == 8 ~ NA_character_,
+
+      sitprof == 1 ~ as.character(haven::as_factor(pcs7)),
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21 <- bs21 %>%
+  mutate(
+    pcs_complet = factor(
+      pcs_complet,
+      levels = c(
+        "Agriculteurs exploitants",
+        "Artisans, commerçants et chefs d'entreprise",
+        "Cadres et professions intellectuelles supérieures",
+        "Professions Intermédiaires",
+        "Employés",
+        "Ouvriers",
+        "Étudiant",
+        "Chômeur",
+        "Retraité",
+        "Autres inactifs"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = case_when(
+
+      # Seul
+      typmen7 == 1 & sexe == 2 ~ "Femme seule",
+      typmen7 == 1 & sexe == 1 ~ "Homme seul",
+
+      # Monoparental
+      typmen7 == 2 & sexe == 2 ~ "Femme avec enfants",
+      typmen7 == 2 & sexe == 1 ~ "Homme avec enfants",
+
+      # Couples
+      typmen7 == 4 ~ "Couple avec enfants",
+      typmen7 == 3 ~ "Couple sans enfant",
+
+      # Autres
+      typmen7 == 5 ~ NA_character_,
+
+      TRUE ~ NA_character_
+    )
+  )
+
+bs21 <- bs21 %>%
+  mutate(
+    situation_fam = factor(
+      situation_fam,
+      levels = c(
+        "Femme seule",
+        "Homme seul",
+        "Femme avec enfants",
+        "Homme avec enfants",
+        "Couple sans enfant",
+        "Couple avec enfants"
+      )
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# echantillon végétariens
+bs21v <- bs21 %>% 
+  filter(ali17==1)
+# échantillon de 200 carnivores
+sous_echantillon_carnivore <- bs21 %>% filter(ali17==2) %>% slice_sample(n=200)
+
+# attention on appelle tout ca bs21v
+# ----------------------------------
+bs21v <- bs21v %>%
+  # ajout de l'échantillon carnivores
+  bind_rows(sous_echantillon_carnivore) %>%
+  # et on recode ali18 pour avoir les carnivores
+  mutate(
+    ali18_rec = case_when(
+      ali18 %in% c(2,4,5,7) ~ "Autre végé",
+      #ali18 %in% c(2,4) ~ "Végétalien/Végan",
+      ali18 == 1 ~ "Végétarien",
+      ali18 == 3 ~ "Flexitarien",
+      TRUE ~ "Carnivore"
+    )
+  )
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v <- bs21v %>%
+  mutate(
+
+    sexe = case_when(
+      sexe == 1 ~ "Homme",
+      sexe == 2 ~ "Femme",
+      is.na(sexe) ~ "sexe_NA",
+      TRUE ~ as.character(sexe)
+    ),
+
+    # recodage diplome pour avoir 3 groupes
+    diplome = case_when(
+      diplome == 1 ~ "Sans diplôme ou moins que bac",
+      diplome == 2 ~ "Sans diplôme ou moins que bac",
+      diplome == 3 ~ "Bac jusqu'à bac +2",
+      diplome == 4 ~ "Bac jusqu'à bac +2",
+      diplome == 5 ~ "Bac +3 et plus",
+      diplome == 6 ~ "Bac +3 ou plus",
+      is.na(diplome) ~ "diplome_NA",
+      TRUE ~ as.character(diplome)
+    ),
+
+    cat_agg6 = case_when(
+      cat_agg6 == 1 ~ "Rural",
+      cat_agg6 == 2 ~ "< 20 000",
+      cat_agg6 == 3 ~ "20 000 - 99 999",
+      cat_agg6 == 4 ~ "100 000 - 199 999",
+      cat_agg6 == 5 ~ "≥ 200 000",
+      cat_agg6 == 6 ~ "Agglomération parisienne",
+      is.na(cat_agg6) ~ "agglo_NA",
+      TRUE ~ as.character(cat_agg6)
+    ),
+
+    va1 = case_when(
+      va1 == 1 ~ "Très favorable au vaccin",
+      va1 == 2 ~ "Plutôt favorable au vaccin",
+      va1 == 3 ~ "Plutôt pas favorable au vaccin",
+      va1 == 4 ~ "Pas du tout favorable au vaccin",
+      va1 == 5 ~ "vaccin_NA",
+      is.na(va1) ~ "vaccin_NA",
+      TRUE ~ as.character(va1)
+    ),
+
+    ali1 = case_when(
+      ali1 == 1 ~ "Légumes chaque jour",
+      ali1 == 2 ~ "Pas légumes chaque jour",
+      is.na(ali1) ~ "legume_NA",
+      TRUE ~ as.character(ali1)
+    ),
+
+    ali4 = case_when(
+      ali4 == 1 ~ "Fruits chaque jour",
+      ali4 == 2 ~ "Pas fruits chaque jour",
+      is.na(ali4) ~ "fruits_NA",
+      TRUE ~ as.character(ali4)
+    ),
+
+    ali7 = case_when(
+      ali7 == 1 ~ "Féculents COMPLETS chaque jour",
+      ali7 == 2 ~ "Pas féculents COMPLETS chaque jour",
+      ali7 == 4 ~ "Pas féculents COMPLETS chaque jour",
+      is.na(ali7) ~ "feculents_NA",
+      TRUE ~ as.character(ali7)
+    ),
+
+    ali9 = case_when(
+      ali9 == 1 ~ "Boissons sucrées chaque jour",
+      ali9 == 2 ~ "Pas boisson sucrée chaque jour",
+      is.na(ali9) ~ "bois_sucre_NA",
+      TRUE ~ as.character(ali9)
+    ),
+
+    ali10 = case_when(
+      ali10 == 1 ~ "Légumes secs chaque semaine",
+      ali10 == 2 ~ "Pas légume sec chaque semaine",
+      ali10 == 4 ~ "Pas légume sec chaque semaine",
+      is.na(ali10) ~ "legumes_NA",
+      TRUE ~ as.character(ali10)
+    ),
+
+    ta1 = case_when(
+      ta1 == 1 ~ "Fumeur",
+      ta1 == 2 ~ "Non fumeur",
+      is.na(ta1) ~ "fumeur_NA",
+      TRUE ~ as.character(ta1)
+    ),
+
+    ts_vie = case_when(
+      ts_vie == 0 ~ "Jamais tenté de se suicider",
+      ts_vie == 1 ~ "Déjà tenté de se suicider",
+      is.na(ts_vie) ~ "suicide_NA",
+      TRUE ~ as.character(ts_vie)
+    ),
+
+    imc3 = case_when(
+      imc3 == 1 ~ "Normal",
+      imc3 == 2 ~ "Surpoids",
+      imc3 == 3 ~ "Obésité",
+      is.na(imc3) ~ "imc_NA",
+      TRUE ~ as.character(imc3)
+    ),
+
+    pcs_complet = case_when(
+      is.na(pcs_complet) ~ "pcs_NA",
+      TRUE ~ as.character(pcs_complet)
+    ),
+
+    situation_fam = case_when(
+      is.na(situation_fam) ~ "situation_fam_NA",
+      TRUE ~ as.character(situation_fam)
+    ),
+
+    ali13 = case_when(
+      ali13 == 1 ~ "Bio tous les jours",
+      ali13 == 2 ~ "Bio souvent",
+      ali13 == 3 ~ "Bio rarement ou jamais",
+      ali13 == 4 ~ "Bio rarement ou jamais",
+      ali13 == 5 ~ "Bio rarement ou jamais",
+      is.na(ali13) ~ "ali13_NA",
+      TRUE ~ as.character(ali13)
+    )
+  )
+
+# alcool
+# la variable BUV 
+# 
+bs21v <- bs21v %>%
+  mutate(alcool = case_when(buv == 1 ~ "alcool oui",
+                            TRUE ~ "alcool non ou rarement"))
+
+# bs21v <- bs21v %>%
+#   mutate(alcool = case_when(age_5 %in% c(12,13) ~ "question alcool pas posée",
+#                             al11 == 2 | al12== 2 ~ "alcool : jamais vie",
+#                             al13a_1 %in% c(1,2) | al13a_2 %in% c(1,2) | al13a_3 %in% c(1,2) | al13a_4 %in% c(1,2) ~ "alcool frequent",
+#                             al13a_1 == 5 & al13a_2 == 5 & al13a_3 == 5 & al13a_4 == 5 ~ "alcool jamais année",
+#                             al13a_1 %in% c(3) | al13a_2 %in% c(3) | al13a_3 %in% c(3) | al13a_4 %in% c(3) ~ "alcool occasionnel",
+#                             al13a_1 %in% c(4) | al13a_2 %in% c(4) | al13a_3 %in% c(4) | al13a_4 %in% c(4) ~ "alcool occasionnel",
+#                             TRUE ~ "alcool_NA") )
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+bs21v_acm_3 <- bs21v %>%
+  # pas la peine d'enlever les vieux si on n'étudie pas va1
+  # mais enlever les vieux si on s'intéresse à l'alcool
+  filter(!age_5 %in% c(12,13)) %>% # on enleve les personnes âgées qui n'ont pas eu la question va1
+  # mutate(ali18_rec = case_when(ali18 %in% c(5,7) ~ "Autre & NSP",
+  #                              ali18 %in% c(2,4) ~ "Végétalien/Végan",
+  #                              ali18 == 1 ~ "Végétarien",
+  #                              ali18 == 3 ~ "Flexitarien")) %>%
+    select(sexe,
+         pcs_complet,
+         diplome,
+         situation_fam,
+         age_10,
+         revenu_tranches,
+         alcool, # consommation alcool
+                  ali18_rec, #type de régime spécifique
+         ali7, #consommation féculents tous les jours
+         ali9, #consommation boissons sucrées tous les jours
+         ali1, #mange légumes chaque jour
+         ali4, #mange fruits chaque jour
+         ali10, #mange légumes secs chaque semaine
+         ali13, #fréquence consommation aliments bio
+         ) %>%
+ mutate(across(everything(), as.factor))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| results: false
+#| fig-width: 8
+#| fig-height: 8
+
+res_acm_3 <- MCA(bs21v_acm_3,
+                 graph = F, 
+               quali.sup = c(1:6)
+               ) 
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width: 20
+#| fig-height: 15
+#| out-width: 100%
+
+mod_actives_fig11 <- as.data.frame(res_acm_3$var$coord) %>%
+  rownames_to_column("modalite") %>%
+  transmute(
+    modalite,
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    type = "Modalité active"
+  )
+
+mod_sup_fig11 <- as.data.frame(res_acm_3$quali.sup$coord) %>%
+  rownames_to_column("modalite") %>%
+  filter(
+    !modalite %in% c("diplome_NA", "pcs_NA", "situation_fam_NA")
+  ) %>%
+  transmute(
+    modalite,
+    Dim1 = `Dim 1`,
+    Dim2 = `Dim 2`,
+    type = "Modalité supplémentaire"
+  )
+
+mod_acm_fig11 <- bind_rows(mod_actives_fig11, mod_sup_fig11)
+
+pct_dim1_fig11 <- round(res_acm_3$eig[1, 2], 1)
+pct_dim2_fig11 <- round(res_acm_3$eig[2, 2], 1)
+
+x_min_fig11 <- min(mod_acm_fig11$Dim1, na.rm = TRUE)
+x_max_fig11 <- max(mod_acm_fig11$Dim1, na.rm = TRUE)
+y_min_fig11 <- min(mod_acm_fig11$Dim2, na.rm = TRUE)
+y_max_fig11 <- max(mod_acm_fig11$Dim2, na.rm = TRUE)
+
+x_pad_fig11 <- (x_max_fig11 - x_min_fig11) * 0.12
+y_pad_fig11 <- (y_max_fig11 - y_min_fig11) * 0.06
+
+x_lim_fig11 <- c(x_min_fig11 - x_pad_fig11, x_max_fig11 + x_pad_fig11)
+y_lim_fig11 <- c(y_min_fig11 - y_pad_fig11, y_max_fig11 + y_pad_fig11)
+
+ggplot(mod_acm_fig11, aes(x = Dim1, y = Dim2)) +
+  
+  geom_segment(
+    aes(x = x_lim_fig11[1], xend = x_lim_fig11[2], y = 0, yend = 0),
+    inherit.aes = FALSE,
+    linewidth = 0.45,
+    color = "grey45"
+  ) +
+  
+  geom_segment(
+    aes(x = 0, xend = 0, y = y_lim_fig11[1], yend = y_lim_fig11[2]),
+    inherit.aes = FALSE,
+    linewidth = 0.45,
+    color = "grey45"
+  ) +
+  
+  annotate(
+    "label",
+    x = 0,
+    y = y_lim_fig11[2],
+    label = "Régime strict",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = NA,
+    vjust = 1.15
+  ) +
+  
+  annotate(
+    "label",
+    x = 0,
+    y = y_lim_fig11[1],
+    label = "Régime souple",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = NA,
+    vjust = -0.15
+  ) +
+  
+  annotate(
+    "label",
+    x = x_lim_fig11[1],
+    y = 0,
+    label = "Santé +",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = NA,
+    hjust = -0.05
+  ) +
+  
+  annotate(
+    "label",
+    x = x_lim_fig11[2],
+    y = 0,
+    label = "Santé -",
+    fontface = "bold",
+    size = 5,
+    color = "grey25",
+    fill = "white",
+    label.size = NA,
+    hjust = 1.05
+  ) +
+  
+  geom_point(
+    aes(color = type, shape = type),
+    size = 1.4,
+    stroke = 0.6
+  ) +
+  
+  geom_text_repel(
+    data = mod_actives_fig11,
+    aes(x = Dim1, y = Dim2, label = modalite),
+    color = "#8B3A3A",
+    size = 4.6,
+    max.overlaps = Inf,
+    force = 7,
+    force_pull = 0.8,
+    box.padding = 0.45,
+    point.padding = 0.25,
+    segment.color = "grey65",
+    segment.linewidth = 0.22,
+    min.segment.length = 0.15,
+    seed = 123,
+    show.legend = FALSE
+  ) +
+  
+  geom_text_repel(
+    data = mod_sup_fig11,
+    aes(x = Dim1, y = Dim2, label = modalite),
+    color = "#84A98C",
+    size = 4.6,
+    fontface = "bold",
+    max.overlaps = Inf,
+    force = 7,
+    force_pull = 0.8,
+    box.padding = 0.45,
+    point.padding = 0.5,
+    segment.color = "grey65",
+    segment.linewidth = 0.22,
+    min.segment.length = 0.35,
+    seed = 123,
+    show.legend = FALSE
+  ) +
+  
+  scale_color_manual(
+    values = c(
+      "Modalité active" = "#8B3A3A",
+      "Modalité supplémentaire" = "#84A98C"
+    )
+  ) +
+  
+  scale_shape_manual(
+    values = c(
+      "Modalité active" = 16,
+      "Modalité supplémentaire" = 3
+    )
+  ) +
+  
+  guides(
+    color = guide_legend(
+      title = NULL,
+      override.aes = list(
+        size = 2.2,
+        stroke = 0.7
+      )
+    ),
+    shape = guide_legend(title = NULL)
+  ) +
+  
+  labs(
+    title = "Figure 13 - Analyse des correspondances multiples représentant les pratiques de consommation des végétariens",
+    x = paste0("Dimension 1 (", pct_dim1_fig11, " %)"),
+    y = paste0("Dimension 2 (", pct_dim2_fig11, " %)"),
+    caption = paste(
+      "Source : Baromètre santé 2021.",
+      "Champ : Ensemble des individus âgés de 18 à 85 ans résidant en France.",
+      "Lecture : Les modalités proches les unes des autres sont associées à des profils de pratiques alimentaires similaires.",
+      sep = "\n"
+    )
+  ) +
+  
+  coord_cartesian(
+    xlim = x_lim_fig11,
+    ylim = y_lim_fig11,
+    clip = "off"
+  ) +
+  
+  theme_minimal(base_size = 15) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    
+    plot.title = element_text(
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    
+    axis.title.x = element_text(
+      size = 14,
+      margin = margin(t = 15)
+    ),
+    
+    axis.title.y = element_text(
+      size = 14,
+      margin = margin(r = 25)
+    ),
+    
+    legend.position = c(0.98, 0.04),
+    legend.justification = c(1, 0),
+    legend.direction = "vertical",
+    legend.background = element_rect(
+      fill = "white",
+      color = "grey80",
+      linewidth = 0.3
+    ),
+    legend.text = element_text(size = 11),
+    
+    plot.caption = element_text(
+      hjust = 0,
+      size = 10
+    ),
+    
+    plot.margin = margin(
+      t = 30,
+      r = 60,
+      b = 40,
+      l = 60
+    )
+  )
+```
